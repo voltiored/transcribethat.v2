@@ -21,7 +21,15 @@ Creadores de contenido vertical (Reels/TikTok/Shorts) que quieren subtítulos r�
 6. Render hardcoded vía FFmpeg listo para descargar
 7. Compatible con Streamlit Community Cloud (1GB RAM) y Emergent preview
 
-## Implemented (2026-01)
+## Implemented (v2 — 2026-01)
+- ✅ **Presets virales**: MrBeast 🟡 / Captions ⬛ / Hormozi Karaoke 🎤 / TikTok Pop 💜 / Personalizado (selector aplica todos los valores con un click)
+- ✅ **Animación karaoke** (palabra-por-palabra): tags `\k<cs>\1c<color>` en ASS, con `SecondaryColour` para palabras no habladas. Probado con render final 175 KB.
+- ✅ **Live preview** del estilo: extrae frame del medio del vídeo + render con FFmpeg + ASS solo con ese bloque, devuelve JPG inline.
+- ✅ **Traducción automática**: gpt-4o-mini vía emergentintegrations; recibe array JSON de bloques, devuelve array traducido; redistribuye timings palabra-por-palabra proporcionalmente. Probado EN→ES con 5/5 bloques traducidos.
+- ✅ **Export SRT y VTT**: formatos estándar con timestamps `HH:MM:SS,mmm` (SRT) y `HH:MM:SS.mmm` (VTT). Botones de descarga directos en columna 2.
+- ✅ Bloques ahora guardan `words[]` con timestamps para soportar karaoke + redistribución tras edición manual del texto
+
+## Implemented (v1 — 2026-01)
 - ✅ UI premium dark (gradiente #0E1117 / #161B22, accent #8A2BE2, fuente Inter + JetBrains Mono)
 - ✅ 3 columnas: Input/Transcripción · Editor · Estilo/Render
 - ✅ Pipeline FFmpeg: extract_audio (mono 16kHz mp3) → transcribe → group → ASS → render
