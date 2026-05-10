@@ -354,6 +354,43 @@ def group_words_into_blocks(words: List[Dict], n: int) -> List[Dict]:
     return blocks
 
 
+def group_words_smart(words: List[Dict], max_per_block: int = 4,
+                     pause_threshold: float = 0.35) -> List[Dict]:
+    """Smart splitter: breaks on pauses (>threshold), strong punctuation, or max length.
+
+    More natural pacing than fixed-N chunks: speaker pauses → new block.
+    """
+    blocks: List[Dict] = []
+    current: List[Dict] = []
+    for i, w in enumerate(words):
+        current.append(w)
+        next_w = words[i + 1] if i + 1 < len(words) else None
+        gap = (next_w["start"] - w["end"]) if next_w else 999
+        token = w["word"].strip()
+        ends_strong = bool(token) and token[-1] in ".!?"
+        ends_soft = bool(token) and token[-1] in ",;:"
+        should_split = (
+            len(current) >= max_per_block
+            or next_w is None
+            or gap >= pause_threshold
+            or (ends_strong and len(current) >= 1)
+            or (ends_soft and len(current) >= 2)
+        )
+        if should_split and current:
+            text = " ".join(x["word"] for x in current).strip()
+            if text:
+                blocks.append({
+                    "id": str(uuid.uuid4())[:8],
+                    "start": current[0]["start"],
+                    "end": current[-1]["end"],
+                    "text": text,
+                    "words": [{"word": x["word"], "start": x["start"], "end": x["end"]}
+                              for x in current],
+                })
+            current = []
+    return blocks
+
+
 async def translate_blocks(blocks: List[Dict], target_lang_name: str) -> List[Dict]:
     """Translate block texts via emergentintegrations chat (gpt-4o-mini)."""
     from emergentintegrations.llm.chat import LlmChat, UserMessage
@@ -401,8 +438,11 @@ def _alignment_code(align: str, position: str) -> int:
     return m.get((align, position), 2)
 
 
-def build_ass_file(blocks: List[Dict], style: Dict, video_w: int = 1080, video_h: int = 1920) -> str:
-    """Generate ASS. If style['karaoke'] → use \\K tags + secondary color for unspoken words."""
+def build_ass_file(blocks: List[Dict], style: Dict, video_w: int = 1080, video_h: int = 1920,
+                   total_duration: float = 0.0, watermark: Dict = None) -> str:
+    """Generate ASS. If style['karaoke'] → use \\K tags + secondary color for unspoken words.
+    Optional watermark dict: {text, font, size, color, opacity (0-1), position}.
+    """
     alignment = _alignment_code(style["align"], style["position"])
     primary = hex_to_ass_color(style["color"])
     secondary = hex_to_ass_color(style.get("karaoke_unspoken_color", "#9CA3AF"))
@@ -432,7 +472,22 @@ YCbCr Matrix: TV.709
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Default,{style['font']},{style['size']},{primary},{secondary},{outline_c},{back_color},{bold},0,0,0,100,100,0,0,{border_style},{style['outline_w']},{style['shadow']},{alignment},40,40,{margin_v},1
+"""
+    # Optional watermark style (alpha-blended via PrimaryAlpha)
+    if watermark and watermark.get("text"):
+        wm_align_map = {"Arriba izquierda": 7, "Arriba derecha": 9,
+                        "Abajo izquierda": 1, "Abajo derecha": 3,
+                        "Arriba centro": 8, "Abajo centro": 2}
+        wm_alignment = wm_align_map.get(watermark.get("position", "Abajo derecha"), 3)
+        # Convert opacity 0-1 → ASS alpha hex (00 = opaque, FF = transparent)
+        op = max(0.05, min(1.0, float(watermark.get("opacity", 0.7))))
+        alpha = f"{int((1 - op) * 255):02X}"
+        wm_color = hex_to_ass_color(watermark.get("color", "#FFFFFF"), alpha=alpha)
+        header += (f"Style: Watermark,{watermark.get('font', 'Inter')},{int(watermark.get('size', 36))},"
+                   f"{wm_color},&H00000000,&H{alpha}000000,&H00000000,"
+                   f"-1,0,0,0,100,100,0,0,1,1.0,0.0,{wm_alignment},25,25,25,1\n")
 
+    header += """
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
@@ -454,6 +509,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             text = blk["text"].replace("\n", "\\N").replace("{", "(").replace("}", ")")
         line = f"Dialogue: 0,{seconds_to_ass_time(blk['start'])},{seconds_to_ass_time(blk['end'])},Default,,0,0,0,,{text}"
         events.append(line)
+
+    # Watermark dialogue line spanning the whole video
+    if watermark and watermark.get("text"):
+        wm_text = str(watermark["text"]).replace("\n", " ").replace("{", "(").replace("}", ")")
+        end_t = total_duration if total_duration > 0 else (
+            blocks[-1]["end"] + 5 if blocks else 9999)
+        events.append(
+            f"Dialogue: 0,{seconds_to_ass_time(0.0)},{seconds_to_ass_time(end_t)},Watermark,,0,0,0,,{wm_text}"
+        )
     return header + "\n".join(events) + "\n"
 
 
@@ -511,7 +575,7 @@ def render_video_with_subs(video_path: str, ass_path: str, output_path: str,
 
 
 def render_preview_frame(video_path: str, blocks: List[Dict], style: Dict,
-                         out_image: str) -> Tuple[bool, str]:
+                         out_image: str, watermark: Dict = None) -> Tuple[bool, str]:
     """Extract a single frame from the middle of a meaningful subtitle block, with subs burned in."""
     if not blocks:
         return False, "No blocks"
@@ -531,7 +595,8 @@ def render_preview_frame(video_path: str, blocks: List[Dict], style: Dict,
         shifted["words"] = [{"word": w["word"],
                              "start": w["start"] - delta,
                              "end": w["end"] - delta} for w in blk["words"]]
-    ass_content = build_ass_file([shifted], style, v_w, v_h)
+    ass_content = build_ass_file([shifted], style, v_w, v_h,
+                                 total_duration=1.0, watermark=watermark)
     ass_path.write_text(ass_content, encoding="utf-8")
 
     filter_txt = work_dir / f"_preview_{uuid.uuid4().hex[:6]}.txt"
@@ -588,6 +653,37 @@ PRESETS = {
         "bg_mode": "Color personalizado", "bg_color": "#8A2BE2",
         "position": "Abajo", "align": "Centro",
         "outline_w": 2.0, "shadow": 1.0, "bold": True, "karaoke": False,
+    },
+    "Storytelling 📖": {
+        "font": "Inter", "size": 56, "color": "#FFFFFF", "outline_color": "#000000",
+        "bg_mode": "Transparente", "bg_color": "#000000",
+        "position": "Abajo", "align": "Centro",
+        "outline_w": 1.5, "shadow": 1.5, "bold": False, "karaoke": False,
+    },
+    "Educativo 📚": {
+        "font": "Roboto", "size": 60, "color": "#FFFFFF", "outline_color": "#0B3954",
+        "bg_mode": "Color personalizado", "bg_color": "#0B3954",
+        "position": "Abajo", "align": "Centro",
+        "outline_w": 1.0, "shadow": 0.0, "bold": True, "karaoke": False,
+    },
+    "Comedy 😂": {
+        "font": "Impact", "size": 96, "color": "#FFEA00", "outline_color": "#D9001B",
+        "bg_mode": "Transparente", "bg_color": "#000000",
+        "position": "Centro", "align": "Centro",
+        "outline_w": 6.0, "shadow": 3.0, "bold": True, "karaoke": False,
+    },
+    "Cinema 🎞️": {
+        "font": "Verdana", "size": 50, "color": "#F5F5F5", "outline_color": "#000000",
+        "bg_mode": "Transparente", "bg_color": "#000000",
+        "position": "Abajo", "align": "Centro",
+        "outline_w": 0.0, "shadow": 2.5, "bold": False, "karaoke": False,
+    },
+    "Karaoke Pink 🎶": {
+        "font": "Bebas Neue", "size": 86, "color": "#FF1F8F", "outline_color": "#000000",
+        "karaoke_unspoken_color": "#00E5FF",
+        "bg_mode": "Transparente", "bg_color": "#000000",
+        "position": "Centro", "align": "Centro",
+        "outline_w": 4.0, "shadow": 2.0, "bold": True, "karaoke": True,
     },
 }
 
@@ -661,6 +757,13 @@ with col_input:
                                index=1, horizontal=True,
                                help="Bloques cortos = más retención.")
 
+    smart_split = st.checkbox(
+        "🧠  Split inteligente (pausas + signos)",
+        value=True,
+        help="Detecta pausas del hablante y signos de puntuación para cortar bloques de forma natural. "
+             "Ignora 'palabras por subtítulo' como límite máximo.",
+    )
+
     LANG_OPTS = [("auto", "Detectar automáticamente"), ("es", "Español"), ("en", "English"),
                  ("pt", "Português"), ("fr", "Français"), ("de", "Deutsch"),
                  ("it", "Italiano"), ("ja", "日本語"), ("zh", "中文")]
@@ -686,7 +789,10 @@ with col_input:
                 if not words:
                     st.error("No se detectó audio inteligible en el vídeo.")
                 else:
-                    ss.blocks = group_words_into_blocks(words, words_per_block)
+                    if smart_split:
+                        ss.blocks = group_words_smart(words, max_per_block=words_per_block)
+                    else:
+                        ss.blocks = group_words_into_blocks(words, words_per_block)
                     ss.transcribed = True
                     ss.output_path = None
                     ss.preview_path = None
@@ -710,7 +816,8 @@ with col_input:
                     for i, t in enumerate(tokens):
                         flat.append({"word": t, "start": b["start"] + i * dur,
                                      "end": b["start"] + (i + 1) * dur})
-            ss.blocks = group_words_into_blocks(flat, words_per_block)
+            ss.blocks = group_words_smart(flat, max_per_block=words_per_block) if smart_split \
+                else group_words_into_blocks(flat, words_per_block)
             st.rerun()
 
         # ─── Translation ────────────────────────────────────────────────
@@ -875,6 +982,37 @@ with col_style:
         shadow = st.slider("Sombra paralela", 0.0, 6.0,
                            float(get_default("shadow", 1.0)), step=0.5)
 
+    # ─── Watermark ─────────────────────────────────────────────────────────
+    with st.expander("💧  Marca de agua (watermark)"):
+        wm_enabled = st.checkbox("Añadir marca de agua", value=False, key="wm_enabled")
+        wm_text = st.text_input("Texto", value="@tu_usuario",
+                                disabled=not wm_enabled, key="wm_text")
+        wm_pos = st.selectbox(
+            "Posición",
+            ["Arriba derecha", "Arriba izquierda", "Arriba centro",
+             "Abajo derecha", "Abajo izquierda", "Abajo centro"],
+            index=3, disabled=not wm_enabled, key="wm_pos",
+        )
+        wcol1, wcol2 = st.columns(2)
+        with wcol1:
+            wm_size = st.slider("Tamaño", 18, 80, 36, step=2,
+                                disabled=not wm_enabled, key="wm_size")
+        with wcol2:
+            wm_color = st.color_picker("Color", "#FFFFFF",
+                                       disabled=not wm_enabled, key="wm_color")
+        wm_opacity = st.slider("Opacidad", 0.1, 1.0, 0.7, step=0.05,
+                               disabled=not wm_enabled, key="wm_opacity")
+        wm_font = st.selectbox("Fuente", FONTS,
+                               index=FONTS.index("Inter"),
+                               disabled=not wm_enabled, key="wm_font")
+
+    watermark = None
+    if wm_enabled and wm_text.strip():
+        watermark = {
+            "text": wm_text.strip(), "font": wm_font, "size": wm_size,
+            "color": wm_color, "opacity": wm_opacity, "position": wm_pos,
+        }
+
     style = {
         "font": font, "size": size, "color": color, "outline_color": outline_color,
         "bg_mode": bg_mode, "bg_color": bg_color, "position": position, "align": align,
@@ -891,7 +1029,8 @@ with col_style:
         wd = get_workdir()
         out_img = os.path.join(wd, f"preview_{uuid.uuid4().hex[:6]}.jpg")
         with st.spinner("Generando preview..."):
-            ok, err = render_preview_frame(ss.video_path, ss.blocks, style, out_img)
+            ok, err = render_preview_frame(ss.video_path, ss.blocks, style, out_img,
+                                           watermark=watermark)
         if ok:
             ss.preview_path = out_img
         else:
@@ -906,7 +1045,9 @@ with col_style:
                  type="primary", use_container_width=True, key="btn-render"):
         wd = get_workdir()
         v_w, v_h = get_video_dimensions(ss.video_path)
-        ass_content = build_ass_file(ss.blocks, style, v_w, v_h)
+        v_dur = get_video_duration(ss.video_path)
+        ass_content = build_ass_file(ss.blocks, style, v_w, v_h,
+                                     total_duration=v_dur, watermark=watermark)
         ass_path = os.path.join(wd, "subs.ass")
         Path(ass_path).write_text(ass_content, encoding="utf-8")
 

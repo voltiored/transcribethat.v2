@@ -21,6 +21,12 @@ Creadores de contenido vertical (Reels/TikTok/Shorts) que quieren subtítulos r�
 6. Render hardcoded vía FFmpeg listo para descargar
 7. Compatible con Streamlit Community Cloud (1GB RAM) y Emergent preview
 
+## Implemented (v3 — 2026-01)
+- ✅ **Smart split inteligente**: detecta pausas del hablante (`>0.35s`) + signos de puntuación (`.!?` → corte fuerte; `,;:` → corte suave) + límite máximo configurable. Resultado: pacing natural alineado con sentencias en lugar de chunks mecánicos. Test: "Hello! This is a test. Subtitles work great." → 6 bloques smart vs 4 fixed.
+- ✅ **Marca de agua (watermark)**: texto + 6 posiciones (4 esquinas + arriba/abajo centro), tamaño 18-80px, color personalizable, opacidad 0.1-1.0, fuente. Implementado como segundo `[V4+ Style]` en ASS con dialogue line cubriendo `[0, video_duration]`. Probado todas las posiciones + render + preview.
+- ✅ **5 Presets adicionales**: Storytelling 📖 (Inter 56 sutil), Educativo 📚 (Roboto blanco/azul oscuro), Comedy 😂 (Impact 96 amarillo+contorno rojo), Cinema 🎞️ (Verdana 50 cinematográfico), Karaoke Pink 🎶 (Bebas Neue rosa→cyan karaoke).
+- **Total presets**: 9 (4 originales + 5 nuevos).
+
 ## Implemented (v2 — 2026-01)
 - ✅ **Presets virales**: MrBeast 🟡 / Captions ⬛ / Hormozi Karaoke 🎤 / TikTok Pop 💜 / Personalizado (selector aplica todos los valores con un click)
 - ✅ **Animación karaoke** (palabra-por-palabra): tags `\k<cs>\1c<color>` en ASS, con `SecondaryColour` para palabras no habladas. Probado con render final 175 KB.
