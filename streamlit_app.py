@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import List, Dict, Tuple
 
 import streamlit as st
+import streamlit.components.v1 as components
 from dotenv import load_dotenv
 
 # Load env (Emergent path first, then root) — only used as last-resort fallback
@@ -51,7 +52,14 @@ html, body, [class*="css"], .stApp {
     color: var(--text) !important;
     font-family: 'Inter', -apple-system, sans-serif !important;
 }
-.block-container { padding-top: 1.5rem !important; padding-bottom: 4rem !important; max-width: 1500px !important; }
+.block-container {
+    padding-top: 1.5rem !important;
+    padding-bottom: 4rem !important;
+    max-width: 100% !important;
+    width: 100% !important;
+    padding-left: 2rem !important;
+    padding-right: 2rem !important;
+}
 
 .tt-header {
     display: flex; align-items: center; justify-content: space-between;
@@ -250,6 +258,8 @@ label, .stSelectbox label, .stTextInput label, .stTextArea label, .stNumberInput
 </style>
 """
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+
+
 
 st.markdown("""
 <div class="tt-header">
@@ -1131,6 +1141,24 @@ col_input, col_editor, col_style = st.columns([1.0, 1.55, 1.05], gap="large")
 with col_input:
     st.markdown('<div class="tt-card-title"><span class="tt-step">1</span>Vídeo &amp; Transcripción</div>', unsafe_allow_html=True)
 
+    st.markdown("""
+    <style>
+    [data-testid="stFileUploaderDropzone"] {
+        min-height: 140px !important;
+        flex-direction: column !important;
+        justify-content: center !important;
+        gap: 8px !important;
+        cursor: pointer !important;
+        transition: border-color 0.2s ease, background 0.2s ease !important;
+    }
+    [data-testid="stFileUploaderDropzone"]:hover,
+    [data-testid="stFileUploaderDropzone"]:focus-within {
+        border-color: var(--accent) !important;
+        background: rgba(138,43,226,0.06) !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
     uploaded = st.file_uploader(
         "Sube tu vídeo vertical",
         type=["mp4", "mov", "mkv", "webm"],
@@ -1418,18 +1446,10 @@ with col_style:
     cc1, cc2 = st.columns(2)
     with cc1:
         color = st.color_picker("Color de texto", get_default("color", "#FFFFFF"))
+        st.markdown(f'<div style="height:8px;border-radius:4px;background:{color};box-shadow:0 0 8px {color}88;"></div>', unsafe_allow_html=True)
     with cc2:
         outline_color = st.color_picker("Color contorno", get_default("outline_color", "#000000"))
-    st.markdown(f"""
-    <div style="display:flex;gap:10px;margin-bottom:10px;margin-top:4px;">
-        <div style="flex:1;height:28px;border-radius:8px;background:{color};border:2px solid rgba(255,255,255,0.15);box-shadow:0 0 10px {color}99;display:flex;align-items:center;justify-content:center;">
-            <span style="font-size:10px;font-family:'JetBrains Mono',monospace;color:white;text-shadow:0 1px 4px #000a;font-weight:700;">{color}</span>
-        </div>
-        <div style="flex:1;height:28px;border-radius:8px;background:{outline_color};border:2px solid rgba(255,255,255,0.15);box-shadow:0 0 10px {outline_color}99;display:flex;align-items:center;justify-content:center;">
-            <span style="font-size:10px;font-family:'JetBrains Mono',monospace;color:white;text-shadow:0 1px 4px #000a;font-weight:700;">{outline_color}</span>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+        st.markdown(f'<div style="height:8px;border-radius:4px;background:{outline_color};box-shadow:0 0 8px {outline_color}88;"></div>', unsafe_allow_html=True)
 
     BG_OPTS = ["Transparente", "Caja negra", "Color personalizado"]
     bg_default = get_default("bg_mode", "Transparente")
@@ -1604,52 +1624,12 @@ with col_editor:
 
     if not ss.video_path:
         st.markdown("""
-        <style>
-        div[data-testid="stFileUploaderDropzone"] {
-            min-height: 260px !important;
-            flex-direction: column !important;
-            justify-content: center !important;
-            gap: 10px !important;
-            background: linear-gradient(180deg, var(--bg-2) 0%, var(--bg-0) 100%) !important;
-            border: 2px dashed var(--border) !important;
-            border-radius: 12px !important;
-            transition: border-color 0.2s ease, background 0.2s ease !important;
-        }
-        div[data-testid="stFileUploaderDropzone"]:hover {
-            border-color: var(--accent) !important;
-        }
-        div[data-testid="stFileUploaderDropzone"] span {
-            font-size: 14px !important;
-            color: var(--text-dim) !important;
-        }
-        div[data-testid="stFileUploaderDropzone"] button {
-            background: var(--accent) !important;
-            color: white !important;
-            border: none !important;
-            border-radius: 8px !important;
-        }
-        </style>
+        <div class="tt-preview-empty">
+            <div class="tt-preview-empty-icon">🎬</div>
+            <div class="tt-preview-empty-title">Sube un vídeo para empezar</div>
+            <div style="font-size:13px;">Arrastra el archivo al recuadro de la izquierda</div>
+        </div>
         """, unsafe_allow_html=True)
-        uploaded2 = st.file_uploader(
-            "⬇️  Arrastra aquí o haz clic · MP4 · MOV · MKV · WEBM",
-            type=["mp4", "mov", "mkv", "webm"],
-            key="uploader2",
-            label_visibility="visible",
-            help="Sube tu vídeo vertical desde aquí o desde la columna izquierda.",
-        )
-        if uploaded2 is not None and ss.video_name != uploaded2.name:
-            wd = get_workdir()
-            video_path = os.path.join(wd, f"input_{uuid.uuid4().hex[:8]}{Path(uploaded2.name).suffix}")
-            with open(video_path, "wb") as f:
-                f.write(uploaded2.getbuffer())
-            ss.video_path = video_path
-            ss.video_name = uploaded2.name
-            ss.video_size = uploaded2.size
-            ss.blocks = []
-            ss.transcribed = False
-            ss.output_path = None
-            ss.preview_path = None
-            st.rerun()
     elif not ss.blocks:
         st.markdown("""
         <div class="tt-preview-empty">
