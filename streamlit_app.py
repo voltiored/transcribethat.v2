@@ -256,10 +256,11 @@ st.markdown("""
     <div class="tt-logo">
         <div class="tt-logo-mark">TT</div>
         <div>
-            <p class="tt-title">Transcribe That!</p>
-            <p class="tt-subtitle">Subtítulos automáticos · 100% gratis · ¿Para Judi? </p>
+            <p class="tt-title">TranscribeThat</p>
+            <p class="tt-subtitle">Subtítulos automáticos · 100% gratis · Karaoke · Traducción · Presets virales</p>
         </div>
     </div>
+    <div class="tt-badge" id="engine-badge">{ENGINE_BADGE}</div>
 </div>
 """.replace("{ENGINE_BADGE}", "OpenAI · whisper-1" if st.session_state.get("user_openai_key") else "faster-whisper · local · free"), unsafe_allow_html=True)
 
@@ -566,6 +567,111 @@ def _redistribute_timings(blocks: List[Dict], new_texts: List[str]) -> List[Dict
     return out
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+#  EMPHASIS DETECTION (Hormozi PRO style: highlight key words bigger + colored)
+# ──────────────────────────────────────────────────────────────────────────────
+# Multilingual hardcoded "impact words" used as FREE fallback when no Claude key
+IMPACT_WORDS = {
+    # ES
+    "dinero", "secreto", "verdad", "nunca", "siempre", "importante", "increíble",
+    "brutal", "millones", "millón", "mejor", "peor", "perfecto", "imposible",
+    "gratis", "ahora", "rápido", "fácil", "garantizado", "exclusivo", "secretos",
+    "trampa", "truco", "trucos", "error", "errores", "fracaso", "éxito", "ganar",
+    "perder", "increible", "loco", "viral", "épico",
+    # EN
+    "money", "secret", "secrets", "truth", "never", "always", "important", "amazing",
+    "incredible", "millions", "million", "best", "worst", "perfect", "impossible",
+    "free", "now", "fast", "easy", "guaranteed", "exclusive", "trick", "tricks",
+    "hack", "hacks", "mistake", "mistakes", "failure", "success", "win", "lose",
+    "insane", "crazy", "viral", "epic", "shocking", "exposed", "revealed",
+    # PT
+    "dinheiro", "segredo", "verdade", "nunca", "sempre", "importante", "incrível",
+    "milhões", "melhor", "pior", "perfeito", "grátis", "agora", "rápido", "fácil",
+    # FR
+    "argent", "secret", "vérité", "jamais", "toujours", "important", "incroyable",
+    "millions", "meilleur", "pire", "parfait", "gratuit", "maintenant",
+}
+
+
+def detect_emphasis_free(blocks: List[Dict]) -> List[Dict]:
+    """Free fallback: hardcoded impact-word matching, multilingual.
+
+    Marks words.is_emphasis = True for matching keywords (case-insensitive,
+    punctuation-stripped).
+    """
+    import string
+    for b in blocks:
+        for w in b.get("words", []):
+            clean = w["word"].lower().strip(string.punctuation + "¿¡«»…")
+            w["is_emphasis"] = clean in IMPACT_WORDS
+    return blocks
+
+
+def detect_emphasis_claude(blocks: List[Dict], api_key: str,
+                           model: str = "claude-haiku-4-5") -> List[Dict]:
+    """Use Claude to identify the 3-5 most impactful words across the whole script.
+
+    Returns blocks with words[i].is_emphasis = True for chosen words.
+    """
+    import anthropic
+    client = anthropic.Anthropic(api_key=api_key)
+
+    # Build a flat numbered list of all words: "[0] Hello [1] this [2] is..."
+    numbered = []
+    flat_words = []
+    idx = 0
+    for b in blocks:
+        for w in b.get("words", []):
+            numbered.append(f"[{idx}] {w['word']}")
+            flat_words.append((b, w))
+            idx += 1
+
+    if not flat_words:
+        return blocks
+
+    target_n = max(3, min(8, len(flat_words) // 8))  # ~12% of words emphasized
+
+    prompt = (
+        "You are a viral video editor. Below is a transcript of a short video, "
+        "with each word numbered. Your job: pick the "
+        f"{target_n} MOST IMPACTFUL words to visually emphasize "
+        "(money, surprise, key claims, emotional peaks, numbers, names of products/people). "
+        "These will be highlighted bigger and in a different color in the subtitles, Hormozi-style.\n\n"
+        "RULES:\n"
+        "- Pick standalone impactful words ONLY (nouns, verbs, adjectives — never articles or prepositions)\n"
+        "- Spread them across the video (not all clustered together)\n"
+        "- Return ONLY a JSON array of integer indices. No explanation.\n\n"
+        f"TRANSCRIPT:\n{' '.join(numbered)}\n\n"
+        "JSON array of indices to emphasize:"
+    )
+
+    msg = client.messages.create(
+        model=model,
+        max_tokens=200,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    raw = msg.content[0].text.strip()
+    m = re.search(r"\[[\s\S]*?\]", raw)
+    if not m:
+        # Fallback to free detection
+        return detect_emphasis_free(blocks)
+    try:
+        indices = set(int(x) for x in json.loads(m.group(0)))
+    except Exception:
+        return detect_emphasis_free(blocks)
+
+    for i, (_b, w) in enumerate(flat_words):
+        w["is_emphasis"] = i in indices
+    return blocks
+
+
+def clear_emphasis(blocks: List[Dict]) -> List[Dict]:
+    for b in blocks:
+        for w in b.get("words", []):
+            w["is_emphasis"] = False
+    return blocks
+
+
 def _alignment_code(align: str, position: str) -> int:
     m = {("Izquierda", "Abajo"): 1, ("Centro", "Abajo"): 2, ("Derecha", "Abajo"): 3,
          ("Izquierda", "Centro"): 4, ("Centro", "Centro"): 5, ("Derecha", "Centro"): 6,
@@ -632,13 +738,20 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             continue
         if style.get("karaoke") and blk.get("words"):
             # Karaoke: each word advances primary color via \K (secondary = unspoken color).
-            # We need to use \1c override per word: swap colors so unspoken=secondary, spoken=primary
-            # Simplest reliable trick: start with \1c=secondary, then on each word emit \k<cs>\1c=primary on that word
+            # If a word has is_emphasis=True → also scale up + emphasis color.
+            emphasis_color = hex_to_ass_color(style.get("karaoke_emphasis_color", "#FFD700"))
+            emphasis_scale = int(style.get("karaoke_emphasis_scale", 130))
             parts = [r"{\1c" + secondary + "}"]
             for w in blk["words"]:
                 cs = max(1, int(round((w["end"] - w["start"]) * 100)))
                 token = w["word"].replace("{", "(").replace("}", ")")
-                parts.append("{\\k%d\\1c%s}%s {\\1c%s}" % (cs, primary, token, secondary))
+                if w.get("is_emphasis"):
+                    # Bigger + emphasis color, then reset
+                    parts.append("{\\k%d\\1c%s\\fscx%d\\fscy%d}%s {\\fscx100\\fscy100\\1c%s}"
+                                 % (cs, emphasis_color, emphasis_scale, emphasis_scale,
+                                    token, secondary))
+                else:
+                    parts.append("{\\k%d\\1c%s}%s {\\1c%s}" % (cs, primary, token, secondary))
             text = "".join(parts).rstrip(" ").rstrip("{\\1c" + secondary + "}")
         else:
             text = blk["text"].replace("\n", "\\N").replace("{", "(").replace("}", ")")
@@ -813,6 +926,15 @@ PRESETS = {
         "position": "Abajo", "align": "Centro",
         "outline_w": 0.0, "shadow": 2.5, "bold": False, "karaoke": False,
     },
+    "Hormozi PRO 🎤✨": {
+        "font": "Bebas Neue", "size": 92, "color": "#FFFFFF", "outline_color": "#000000",
+        "karaoke_unspoken_color": "#FFFFFF",
+        "karaoke_emphasis_color": "#FFD700",
+        "karaoke_emphasis_scale": 135,
+        "bg_mode": "Transparente", "bg_color": "#000000",
+        "position": "Centro", "align": "Centro",
+        "outline_w": 5.0, "shadow": 2.5, "bold": True, "karaoke": True,
+    },
     "Karaoke Pink 🎶": {
         "font": "Bebas Neue", "size": 86, "color": "#FF1F8F", "outline_color": "#000000",
         "karaoke_unspoken_color": "#00E5FF",
@@ -836,6 +958,8 @@ ss.setdefault("transcribed", False)
 ss.setdefault("workdir", None)
 ss.setdefault("preset_applied", "Personalizado")
 ss.setdefault("user_openai_key", "")
+ss.setdefault("user_anthropic_key", "")
+ss.setdefault("emphasis_detected", False)
 
 
 def get_workdir() -> str:
@@ -944,9 +1068,33 @@ with col_input:
             ss.user_openai_key = new_key.strip()
             st.rerun()
         if ss.get("user_openai_key"):
-            if st.button("Quitar key y volver a modo gratis", type="secondary",
+            if st.button("Quitar OpenAI key", type="secondary",
                          use_container_width=True, key="btn-clear-key"):
                 ss.user_openai_key = ""
+                st.rerun()
+
+    with st.expander("🤖  Claude API Key (opcional, para detección PRO)"):
+        st.caption(
+            "Pegando tu Claude key, la app usa **Claude Haiku 4.5** para "
+            "auto-detectar palabras impactantes (Hormozi PRO), traducciones "
+            "más naturales y futuras features. Coste por vídeo: ~$0.0002. "
+            "**Tu key nunca se guarda en disco**."
+        )
+        new_anthro = st.text_input(
+            "Tu Anthropic API Key (sk-ant-...)",
+            value=ss.get("user_anthropic_key", ""),
+            type="password",
+            placeholder="sk-ant-...",
+            key="anthropic_key_input",
+            help="Obtén una en console.anthropic.com/settings/keys",
+        )
+        if new_anthro != ss.get("user_anthropic_key", ""):
+            ss.user_anthropic_key = new_anthro.strip()
+            st.rerun()
+        if ss.get("user_anthropic_key"):
+            if st.button("Quitar Claude key", type="secondary",
+                         use_container_width=True, key="btn-clear-anthro"):
+                ss.user_anthropic_key = ""
                 st.rerun()
 
     transcribe_disabled = ss.video_path is None
@@ -1003,6 +1151,40 @@ with col_input:
                 else group_words_into_blocks(flat, words_per_block)
             st.rerun()
 
+        # ─── PRO: Auto-detectar palabras clave (emphasis) ──────────────────
+        st.markdown("---")
+        st.markdown('<div class="tt-card-title" style="margin-bottom:8px;">✨ Palabras clave PRO</div>',
+                    unsafe_allow_html=True)
+        emp_engine = ("Claude Haiku 4.5 (tu key)"
+                      if ss.get("user_anthropic_key") else "Keywords libres (gratis)")
+        st.caption(f"Motor: **{emp_engine}** · Resalta palabras impactantes en estilo Hormozi.")
+        empc1, empc2 = st.columns(2)
+        with empc1:
+            if st.button("✨  Detectar", type="secondary",
+                         use_container_width=True, key="btn-emphasis"):
+                try:
+                    with st.spinner("Detectando palabras clave..."):
+                        if ss.get("user_anthropic_key"):
+                            ss.blocks = detect_emphasis_claude(
+                                ss.blocks, ss.user_anthropic_key)
+                        else:
+                            ss.blocks = detect_emphasis_free(ss.blocks)
+                    ss.emphasis_detected = True
+                    ss.preview_path = None
+                    n_emp = sum(1 for b in ss.blocks for w in b.get("words", []) if w.get("is_emphasis"))
+                    st.success(f"✅  {n_emp} palabras destacadas.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
+        with empc2:
+            if st.button("🗑  Limpiar", type="secondary",
+                         use_container_width=True, key="btn-clear-emphasis",
+                         disabled=not ss.emphasis_detected):
+                ss.blocks = clear_emphasis(ss.blocks)
+                ss.emphasis_detected = False
+                ss.preview_path = None
+                st.rerun()
+
         # ─── Translation ────────────────────────────────────────────────
         st.markdown("---")
         st.markdown('<div class="tt-card-title" style="margin-bottom:8px;">🌐 Traducir subtítulos</div>',
@@ -1055,6 +1237,9 @@ with col_style:
             for k, v in PRESETS[preset_name].items():
                 ss[f"_pre_{k}"] = v
         ss.preview_path = None
+        # If switching to/from Hormozi PRO, hint about emphasis detection
+        if preset_name == "Hormozi PRO 🎤✨" and not ss.get("emphasis_detected"):
+            st.toast("💡 Pulsa 'Detectar palabras clave PRO' en la columna 1 para el efecto Hormozi completo")
 
     def get_default(k, fallback):
         return ss.get(f"_pre_{k}", fallback)
@@ -1106,12 +1291,22 @@ with col_style:
                           value=get_default("karaoke", False),
                           help="Resalta cada palabra a medida que se pronuncia. Estilo Hormozi.")
     karaoke_unspoken_color = "#9CA3AF"
+    karaoke_emphasis_color = get_default("karaoke_emphasis_color", "#FFD700")
+    karaoke_emphasis_scale = int(get_default("karaoke_emphasis_scale", 130))
     if karaoke:
-        karaoke_unspoken_color = st.color_picker(
-            "Color palabras no habladas",
-            get_default("karaoke_unspoken_color", "#FFFFFF"),
-            help="Color de las palabras que aún no se han pronunciado.",
-        )
+        kc1, kc2 = st.columns(2)
+        with kc1:
+            karaoke_unspoken_color = st.color_picker(
+                "Color sin hablar",
+                get_default("karaoke_unspoken_color", "#FFFFFF"),
+                help="Color de palabras que aún no se han pronunciado.",
+            )
+        with kc2:
+            karaoke_emphasis_color = st.color_picker(
+                "Color énfasis ✨",
+                karaoke_emphasis_color,
+                help="Color de palabras destacadas con 'Detectar palabras clave PRO'.",
+            )
 
     with st.expander("⚙️  Efectos avanzados"):
         outline_w = st.slider("Grosor del contorno", 0.0, 6.0,
@@ -1155,6 +1350,8 @@ with col_style:
         "bg_mode": bg_mode, "bg_color": bg_color, "position": position, "align": align,
         "outline_w": outline_w, "shadow": shadow, "bold": bold,
         "karaoke": karaoke, "karaoke_unspoken_color": karaoke_unspoken_color,
+        "karaoke_emphasis_color": karaoke_emphasis_color,
+        "karaoke_emphasis_scale": karaoke_emphasis_scale,
     }
 
     st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
