@@ -592,18 +592,88 @@ IMPACT_WORDS = {
     "millions", "meilleur", "pire", "parfait", "gratuit", "maintenant",
 }
 
+# Long-but-meaningless words to exclude from "long word" detection
+STOPWORDS_LONG = {
+    # ES
+    "porque", "cuando", "donde", "todos", "todas", "siendo", "estaba", "estuvo",
+    "estado", "tenemos", "tenían", "habían", "tienes", "nuestra", "nuestro",
+    "vosotros", "ustedes", "después", "antes", "durante", "mediante", "respecto",
+    "aunque", "mientras", "entonces", "también", "tampoco", "siguiente", "anterior",
+    # EN
+    "because", "should", "would", "could", "people", "really", "actually",
+    "everyone", "anything", "something", "without", "between", "through",
+    "another", "around", "before", "however", "itself", "themselves", "whatever",
+    "whenever", "wherever", "different", "anyway", "literally", "basically",
+    # PT
+    "porque", "quando", "depois", "antes", "durante", "mediante", "embora",
+    # FR
+    "parce", "lorsque", "pendant", "puisque", "toutefois", "cependant",
+}
 
-def detect_emphasis_free(blocks: List[Dict]) -> List[Dict]:
-    """Free fallback: hardcoded impact-word matching, multilingual.
 
-    Marks words.is_emphasis = True for matching keywords (case-insensitive,
-    punctuation-stripped).
+def detect_emphasis_free(blocks: List[Dict],
+                        target_ratio: float = 0.15,
+                        min_distance: int = 3,
+                        long_word_min_len: int = 7) -> List[Dict]:
+    """Free emphasis detection (no API key required).
+
+    Strategy:
+      • Score every word: IMPACT_WORDS = 100, numbers = 80, long words = 50.
+      • Pick top ~15% of words by priority (rounded UP for short text).
+      • Enforce minimum distance (default 3 words apart) so emphasis is spread,
+        not clustered → "de vez en cuando" effect.
     """
     import string
+    import math
+
+    # Flatten all words
+    all_words = []
     for b in blocks:
         for w in b.get("words", []):
-            clean = w["word"].lower().strip(string.punctuation + "¿¡«»…")
-            w["is_emphasis"] = clean in IMPACT_WORDS
+            w["is_emphasis"] = False  # reset
+            all_words.append(w)
+
+    if not all_words:
+        return blocks
+
+    PUNCT = string.punctuation + "¿¡«»…—–“”"
+    candidates = []  # (priority, index)
+    for idx, w in enumerate(all_words):
+        token = w["word"]
+        clean = token.lower().strip(PUNCT)
+        priority = 0
+        # Top priority: hand-curated impact words
+        if clean in IMPACT_WORDS:
+            priority = 100
+        # High priority: contains digits (numbers, $100, 5x, etc.)
+        elif any(c.isdigit() for c in token):
+            priority = 80
+        # Medium priority: long words that aren't stopwords
+        elif len(clean) >= long_word_min_len and clean not in STOPWORDS_LONG:
+            priority = 50
+        # Bonus: ALL CAPS words (likely emphasis already)
+        if token.isupper() and len(clean) > 2:
+            priority = max(priority, 70)
+        if priority > 0:
+            candidates.append((priority, idx))
+
+    # Sort by priority desc, then by position (stable for ties)
+    candidates.sort(key=lambda x: (-x[0], x[1]))
+
+    # Pick with distance constraint
+    target = max(1, math.ceil(len(all_words) * target_ratio))
+    selected = set()
+    for _prio, idx in candidates:
+        if len(selected) >= target:
+            break
+        if any(abs(idx - s) < min_distance for s in selected):
+            continue
+        selected.add(idx)
+
+    # Apply emphasis flags
+    for idx in selected:
+        all_words[idx]["is_emphasis"] = True
+
     return blocks
 
 
@@ -670,6 +740,48 @@ def clear_emphasis(blocks: List[Dict]) -> List[Dict]:
         for w in b.get("words", []):
             w["is_emphasis"] = False
     return blocks
+
+
+def split_emphasis_to_solo(blocks: List[Dict]) -> List[Dict]:
+    """For each emphasis word, make it a standalone block (more visual impact).
+
+    Splits blocks containing emphasis words into chunks:
+      • non-emphasis words → grouped together as before
+      • each emphasis word → its own standalone block
+
+    Example:
+      "I made a million dollars with this incredible secret"  (million, incredible emphasis)
+      → "I made a" | "million" | "dollars with this" | "incredible" | "secret"
+    """
+    def _make_block(words_chunk: List[Dict]) -> Dict:
+        text = " ".join(w["word"] for w in words_chunk).strip()
+        return {
+            "id": str(uuid.uuid4())[:8],
+            "start": words_chunk[0]["start"],
+            "end": words_chunk[-1]["end"],
+            "text": text,
+            "words": [{"word": w["word"], "start": w["start"], "end": w["end"],
+                       "is_emphasis": w.get("is_emphasis", False)} for w in words_chunk],
+        }
+
+    new_blocks: List[Dict] = []
+    for b in blocks:
+        words = b.get("words", [])
+        if not words:
+            new_blocks.append(b)
+            continue
+        chunk: List[Dict] = []
+        for w in words:
+            if w.get("is_emphasis"):
+                if chunk:
+                    new_blocks.append(_make_block(chunk))
+                    chunk = []
+                new_blocks.append(_make_block([w]))
+            else:
+                chunk.append(w)
+        if chunk:
+            new_blocks.append(_make_block(chunk))
+    return new_blocks
 
 
 def _alignment_code(align: str, position: str) -> int:
@@ -741,20 +853,42 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             # If a word has is_emphasis=True → also scale up + emphasis color.
             emphasis_color = hex_to_ass_color(style.get("karaoke_emphasis_color", "#FFD700"))
             emphasis_scale = int(style.get("karaoke_emphasis_scale", 130))
-            parts = [r"{\1c" + secondary + "}"]
-            for w in blk["words"]:
-                cs = max(1, int(round((w["end"] - w["start"]) * 100)))
+            uppercase = bool(style.get("uppercase"))
+
+            # ── Special case: SOLO emphasis word block → bouncy pop-in animation ──
+            if len(blk["words"]) == 1 and blk["words"][0].get("is_emphasis"):
+                w = blk["words"][0]
                 token = w["word"].replace("{", "(").replace("}", ")")
-                if w.get("is_emphasis"):
-                    # Bigger + emphasis color, then reset
-                    parts.append("{\\k%d\\1c%s\\fscx%d\\fscy%d}%s {\\fscx100\\fscy100\\1c%s}"
-                                 % (cs, emphasis_color, emphasis_scale, emphasis_scale,
-                                    token, secondary))
-                else:
-                    parts.append("{\\k%d\\1c%s}%s {\\1c%s}" % (cs, primary, token, secondary))
-            text = "".join(parts).rstrip(" ").rstrip("{\\1c" + secondary + "}")
+                if uppercase:
+                    token = token.upper()
+                # Bouncy pop-in: 50% → 160% (overshoot) → 92% → 100% in 380ms
+                text = (
+                    "{\\1c%s\\fscx50\\fscy50"
+                    "\\t(0,140,\\fscx160\\fscy160)"
+                    "\\t(140,260,\\fscx92\\fscy92)"
+                    "\\t(260,380,\\fscx100\\fscy100)"
+                    "}%s"
+                ) % (emphasis_color, token)
+            else:
+                parts = [r"{\1c" + secondary + "}"]
+                for w in blk["words"]:
+                    cs = max(1, int(round((w["end"] - w["start"]) * 100)))
+                    token = w["word"].replace("{", "(").replace("}", ")")
+                    if uppercase:
+                        token = token.upper()
+                    if w.get("is_emphasis"):
+                        # Bigger + emphasis color, then reset
+                        parts.append("{\\k%d\\1c%s\\fscx%d\\fscy%d}%s {\\fscx100\\fscy100\\1c%s}"
+                                     % (cs, emphasis_color, emphasis_scale, emphasis_scale,
+                                        token, secondary))
+                    else:
+                        parts.append("{\\k%d\\1c%s}%s {\\1c%s}" % (cs, primary, token, secondary))
+                text = "".join(parts).rstrip(" ").rstrip("{\\1c" + secondary + "}")
         else:
-            text = blk["text"].replace("\n", "\\N").replace("{", "(").replace("}", ")")
+            raw = blk["text"]
+            if style.get("uppercase"):
+                raw = raw.upper()
+            text = raw.replace("\n", "\\N").replace("{", "(").replace("}", ")")
         line = f"Dialogue: 0,{seconds_to_ass_time(blk['start'])},{seconds_to_ass_time(blk['end'])},Default,,0,0,0,,{text}"
         events.append(line)
 
@@ -882,6 +1016,7 @@ PRESETS = {
         "bg_mode": "Transparente", "bg_color": "#000000",
         "position": "Centro", "align": "Centro",
         "outline_w": 5.0, "shadow": 2.0, "bold": True, "karaoke": False,
+        "uppercase": True,
     },
     "Captions ⬛": {
         "font": "Montserrat", "size": 64, "color": "#FFFFFF", "outline_color": "#000000",
@@ -934,6 +1069,7 @@ PRESETS = {
         "bg_mode": "Transparente", "bg_color": "#000000",
         "position": "Centro", "align": "Centro",
         "outline_w": 5.0, "shadow": 2.5, "bold": True, "karaoke": True,
+        "uppercase": True,
     },
     "Karaoke Pink 🎶": {
         "font": "Bebas Neue", "size": 86, "color": "#FF1F8F", "outline_color": "#000000",
@@ -1169,10 +1305,12 @@ with col_input:
                                 ss.blocks, ss.user_anthropic_key)
                         else:
                             ss.blocks = detect_emphasis_free(ss.blocks)
+                        # Split: each emphasis word becomes its own block
+                        ss.blocks = split_emphasis_to_solo(ss.blocks)
                     ss.emphasis_detected = True
                     ss.preview_path = None
                     n_emp = sum(1 for b in ss.blocks for w in b.get("words", []) if w.get("is_emphasis"))
-                    st.success(f"✅  {n_emp} palabras destacadas.")
+                    st.success(f"✅  {n_emp} palabras destacadas en su propio bloque.")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error: {e}")
@@ -1254,6 +1392,10 @@ with col_style:
         )
         size = st.slider("Tamaño de fuente", 24, 120, get_default("size", 72), step=2)
         bold = st.checkbox("Negrita", value=get_default("bold", True))
+        uppercase = st.checkbox(
+            "TODO MAYÚSCULAS", value=get_default("uppercase", False),
+            help="Convierte todo el texto a mayúsculas (efecto MrBeast/Hormozi).",
+        )
 
     cc1, cc2 = st.columns(2)
     with cc1:
@@ -1348,7 +1490,7 @@ with col_style:
     style = {
         "font": font, "size": size, "color": color, "outline_color": outline_color,
         "bg_mode": bg_mode, "bg_color": bg_color, "position": position, "align": align,
-        "outline_w": outline_w, "shadow": shadow, "bold": bold,
+        "outline_w": outline_w, "shadow": shadow, "bold": bold, "uppercase": uppercase,
         "karaoke": karaoke, "karaoke_unspoken_color": karaoke_unspoken_color,
         "karaoke_emphasis_color": karaoke_emphasis_color,
         "karaoke_emphasis_scale": karaoke_emphasis_scale,
