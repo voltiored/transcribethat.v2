@@ -839,12 +839,15 @@ def build_ass_file(blocks: List[Dict], style: Dict, video_w: int = 1080, video_h
     if style["bg_mode"] == "Transparente":
         border_style = 1
         back_color = "&H00000000"
+        bg_outline_w = style["outline_w"]
     elif style["bg_mode"] == "Caja negra":
-        border_style = 3
-        back_color = hex_to_ass_color("#000000", alpha="40")
+        border_style = 4  # BorderStyle 4 = caja redondeada en libass/ffmpeg
+        back_color = hex_to_ass_color("#000000", alpha="60")
+        bg_outline_w = max(style["outline_w"], 12.0)  # outline alto = esquinas redondeadas
     else:
-        border_style = 3
-        back_color = hex_to_ass_color(style["bg_color"], alpha="40")
+        border_style = 4
+        back_color = hex_to_ass_color(style["bg_color"], alpha="CC")
+        bg_outline_w = max(style["outline_w"], 12.0)
 
     if style["position"] == "Personalizada":
         margin_v = int(style.get("custom_margin_v", 350))
@@ -856,13 +859,13 @@ def build_ass_file(blocks: List[Dict], style: Dict, video_w: int = 1080, video_h
 ScriptType: v4.00+
 PlayResX: {video_w}
 PlayResY: {video_h}
-WrapStyle: 2
+WrapStyle: 0
 ScaledBorderAndShadow: yes
 YCbCr Matrix: TV.709
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{style['font']},{style['size']},{primary},{secondary},{outline_c},{back_color},{bold},0,0,0,100,100,0,0,{border_style},{style['outline_w']},{style['shadow']},{alignment},40,40,{margin_v},1
+Style: Default,{style['font']},{style['size']},{primary},{secondary},{outline_c},{back_color},{bold},0,0,0,100,100,0,0,{border_style},{bg_outline_w},{style['shadow']},{alignment},40,40,{margin_v},1
 """
     # Optional watermark style (alpha-blended via PrimaryAlpha)
     if watermark and watermark.get("text"):
