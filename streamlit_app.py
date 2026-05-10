@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import List, Dict, Tuple
 
 import streamlit as st
-import streamlit.components.v1 as components
 from dotenv import load_dotenv
 
 # Load env (Emergent path first, then root) — only used as last-resort fallback
@@ -52,14 +51,7 @@ html, body, [class*="css"], .stApp {
     color: var(--text) !important;
     font-family: 'Inter', -apple-system, sans-serif !important;
 }
-.block-container {
-    padding-top: 1.5rem !important;
-    padding-bottom: 4rem !important;
-    max-width: 100% !important;
-    width: 100% !important;
-    padding-left: 2rem !important;
-    padding-right: 2rem !important;
-}
+.block-container { padding-top: 1.5rem !important; padding-bottom: 4rem !important; max-width: 1500px !important; }
 
 .tt-header {
     display: flex; align-items: center; justify-content: space-between;
@@ -209,7 +201,7 @@ label, .stSelectbox label, .stTextInput label, .stTextArea label, .stNumberInput
     padding: 18px;
     margin-bottom: 18px;
     position: relative;
-    overflow: hidden;
+    overflow: visible;
 }
 .tt-preview-wrap::before {
     content: ''; position: absolute; inset: 0;
@@ -242,7 +234,6 @@ label, .stSelectbox label, .stTextInput label, .stTextArea label, .stNumberInput
 
 #MainMenu, footer, header[data-testid="stHeader"] { visibility: hidden; height: 0; }
 [data-testid="stToolbar"] { display: none !important; }
-
 .stProgress > div > div > div { background: var(--accent) !important; }
 .stProgress > div > div { background: var(--bg-2) !important; }
 
@@ -256,9 +247,42 @@ label, .stSelectbox label, .stTextInput label, .stTextArea label, .stNumberInput
 
 .tt-export-row { display: flex; gap: 8px; margin-top: 10px; }
 </style>
+<div id="tt-drop-overlay" style="display:none;position:fixed;inset:0;z-index:99999;background:rgba(138,43,226,0.18);border:3px dashed #9D4BFF;border-radius:18px;align-items:center;justify-content:center;pointer-events:none;">
+  <div style="color:#fff;font-size:28px;font-weight:800;font-family:Inter,sans-serif;text-shadow:0 2px 12px #0008;letter-spacing:-0.5px;">🎬 Suelta el vídeo aquí</div>
+</div>
+<script>
+(function() {
+  var overlay = document.getElementById('tt-drop-overlay');
+  var dragCounter = 0;
+  document.addEventListener('dragenter', function(e) {
+    if (e.dataTransfer && Array.from(e.dataTransfer.types||[]).includes('Files')) {
+      dragCounter++;
+      overlay.style.display = 'flex';
+    }
+  });
+  document.addEventListener('dragleave', function(e) {
+    dragCounter = Math.max(0, dragCounter - 1);
+    if (dragCounter === 0) overlay.style.display = 'none';
+  });
+  document.addEventListener('dragover', function(e) { e.preventDefault(); });
+  document.addEventListener('drop', function(e) {
+    e.preventDefault();
+    dragCounter = 0;
+    overlay.style.display = 'none';
+    var files = e.dataTransfer.files;
+    if (!files || !files.length) return;
+    var input = document.querySelector('input[type="file"][accept*="mp4"]');
+    if (!input) input = document.querySelector('input[type="file"]');
+    if (!input) return;
+    var dt = new DataTransfer();
+    dt.items.add(files[0]);
+    input.files = dt.files;
+    input.dispatchEvent(new Event('change', {bubbles:true}));
+  });
+})();
+</script>
 """
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
-
 
 
 st.markdown("""
@@ -822,7 +846,10 @@ def build_ass_file(blocks: List[Dict], style: Dict, video_w: int = 1080, video_h
         border_style = 3
         back_color = hex_to_ass_color(style["bg_color"], alpha="40")
 
-    margin_v = 350 if style["position"] in ("Arriba", "Abajo") else 0
+    if style["position"] == "Personalizada":
+        margin_v = int(style.get("custom_margin_v", 350))
+    else:
+        margin_v = 350 if style["position"] in ("Arriba", "Abajo") else 0
     bold = -1 if style["bold"] else 0
 
     header = f"""[Script Info]
@@ -1197,7 +1224,7 @@ with col_input:
 
     words_per_block = st.selectbox(
         "Palabras por subtítulo",
-        options=[2, 3, 4],
+        options=[2, 3, 4, 5, 6, 7, 8, 10, 12],
         index=1,
         help="Bloques cortos = más retención. (Se usa como límite máximo; el split inteligente "
              "corta antes en pausas y signos de puntuación.)",
@@ -1468,12 +1495,11 @@ with col_style:
         "Posición vertical", POS_OPTS,
         index=POS_OPTS.index(pos_default) if pos_default in POS_OPTS else 2,
     )
-    custom_margin_v = int(get_default("custom_margin_v", 80))
+    custom_margin_v = int(get_default("custom_margin_v", 350))
     if position == "Personalizada":
         custom_margin_v = st.slider(
             "Margen vertical (px)", 0, 900, custom_margin_v, step=10,
-            help="0 = pegado al borde inferior, valores altos suben el texto. "
-                 "Para vídeo 1080×1920: ~80 es muy abajo, ~900 es muy arriba.",
+            help="0 = pegado al borde inferior · 350 = posición estándar · 900 = muy arriba.",
         )
         ss["_pre_custom_margin_v"] = custom_margin_v
 
@@ -1627,7 +1653,7 @@ with col_editor:
         <div class="tt-preview-empty">
             <div class="tt-preview-empty-icon">🎬</div>
             <div class="tt-preview-empty-title">Sube un vídeo para empezar</div>
-            <div style="font-size:13px;">Arrastra el archivo al recuadro de la izquierda</div>
+            <div style="font-size:13px;">Aquí verás el preview con tu estilo aplicado</div>
         </div>
         """, unsafe_allow_html=True)
     elif not ss.blocks:
