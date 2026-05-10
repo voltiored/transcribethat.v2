@@ -1,22 +1,14 @@
 """
-TranscribeThat — Streamlit + OpenAI Whisper API + FFmpeg
+TranscribeThat — Streamlit + faster-whisper (local, free) / OpenAI Whisper API (BYOK) + FFmpeg
 Optimized for Streamlit Community Cloud (1GB RAM) and Emergent preview.
 
-Features:
-- Whisper-1 transcription with word-level timestamps
-- Block editor (2/3/4 words per subtitle)
-- Visual customization (font, size, color, bg, position, alignment, outline, shadow)
-- Viral presets (MrBeast / Captions / Hormozi Karaoke)
-- Karaoke word-by-word animation (\\K tags in ASS)
-- Live preview on a real video frame
-- Auto-translation via GPT-4o-mini
-- Export MP4 (hardcoded subs), SRT and VTT
+Default: 100% FREE (faster-whisper local + Google Translate via deep-translator).
+Optional: user pastes their OpenAI key → uses Whisper-1 API + GPT-4o-mini for higher quality.
 """
 import os
 import re
 import json
 import shutil
-import asyncio
 import subprocess
 import tempfile
 import uuid
@@ -26,16 +18,12 @@ from typing import List, Dict, Tuple
 import streamlit as st
 from dotenv import load_dotenv
 
-# Load env (Emergent path first, then root)
+# Load env (Emergent path first, then root) — only used as last-resort fallback
 for env_path in [Path(__file__).parent / "backend" / ".env",
                  Path(__file__).parent / ".env"]:
     if env_path.exists():
         load_dotenv(env_path)
         break
-
-EMERGENT_LLM_KEY = (os.environ.get("EMERGENT_LLM_KEY")
-                    or os.environ.get("OPENAI_API_KEY")
-                    or st.secrets.get("EMERGENT_LLM_KEY", None) if hasattr(st, "secrets") else None)
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  PAGE CONFIG + CUSTOM DARK THEME
@@ -209,12 +197,12 @@ st.markdown("""
         <div class="tt-logo-mark">TT</div>
         <div>
             <p class="tt-title">TranscribeThat</p>
-            <p class="tt-subtitle">Subtítulos automáticos · Karaoke · Traducción · Presets virales</p>
+            <p class="tt-subtitle">Subtítulos automáticos · 100% gratis · Karaoke · Traducción · Presets virales</p>
         </div>
     </div>
-    <div class="tt-badge">whisper-1 · gpt-4o-mini · ffmpeg</div>
+    <div class="tt-badge" id="engine-badge">{ENGINE_BADGE}</div>
 </div>
-""", unsafe_allow_html=True)
+""".replace("{ENGINE_BADGE}", "OpenAI · whisper-1" if st.session_state.get("user_openai_key") else "faster-whisper · local · free"), unsafe_allow_html=True)
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  HELPERS
@@ -297,10 +285,16 @@ def get_video_dimensions(video_path: str) -> Tuple[int, int]:
         return 1080, 1920
 
 
-async def transcribe_with_api(audio_path: str, language: str = None) -> List[Dict]:
-    """Whisper-1 with word timestamps."""
-    from emergentintegrations.llm.openai import OpenAISpeechToText
-    stt = OpenAISpeechToText(api_key=EMERGENT_LLM_KEY)
+async def transcribe_with_api(audio_path: str, language: str = None,
+                              api_key: str = None) -> List[Dict]:
+    """[Legacy compatibility wrapper] Whisper-1 via OpenAI direct API."""
+    return transcribe_openai(audio_path, language, api_key)
+
+
+def transcribe_openai(audio_path: str, language: str = None, api_key: str = None) -> List[Dict]:
+    """Transcribe via OpenAI Whisper-1 API (requires user-provided key)."""
+    from openai import OpenAI
+    client = OpenAI(api_key=api_key)
     kwargs = {
         "model": "whisper-1",
         "response_format": "verbose_json",
@@ -310,8 +304,8 @@ async def transcribe_with_api(audio_path: str, language: str = None) -> List[Dic
     if language and language != "auto":
         kwargs["language"] = language
     with open(audio_path, "rb") as f:
-        kwargs["file"] = f
-        response = await stt.transcribe(**kwargs)
+        response = client.audio.transcriptions.create(file=f, **kwargs)
+
     words = []
     raw_words = getattr(response, "words", None) or []
     for w in raw_words:
@@ -321,6 +315,7 @@ async def transcribe_with_api(audio_path: str, language: str = None) -> List[Dic
             "end": float(getattr(w, "end", None) or w.get("end", 0.0)),
         })
     if not words:
+        # Fallback: segment-level → distribute timings
         segs = getattr(response, "segments", None) or []
         for s in segs:
             text = (getattr(s, "text", None) or s.get("text", "")).strip()
@@ -332,6 +327,46 @@ async def transcribe_with_api(audio_path: str, language: str = None) -> List[Dic
             dur = (end - start) / len(tokens)
             for i, tok in enumerate(tokens):
                 words.append({"word": tok, "start": start + i * dur, "end": start + (i + 1) * dur})
+    return words
+
+
+@st.cache_resource(show_spinner=False)
+def _load_whisper_local(model_size: str):
+    """Lazy-load and cache faster-whisper model."""
+    from faster_whisper import WhisperModel
+    return WhisperModel(model_size, device="cpu", compute_type="int8")
+
+
+def transcribe_local(audio_path: str, language: str = None,
+                     model_size: str = "base") -> List[Dict]:
+    """Transcribe locally with faster-whisper. 100% free, runs on CPU."""
+    model = _load_whisper_local(model_size)
+    lang = language if language and language != "auto" else None
+    segments, _info = model.transcribe(
+        audio_path,
+        language=lang,
+        word_timestamps=True,
+        vad_filter=True,
+        beam_size=1,
+    )
+    words = []
+    for seg in segments:
+        if not getattr(seg, "words", None):
+            # Fallback: synthesize word timings
+            text = (seg.text or "").strip()
+            tokens = text.split()
+            if not tokens:
+                continue
+            dur = (seg.end - seg.start) / len(tokens)
+            for i, tok in enumerate(tokens):
+                words.append({"word": tok, "start": seg.start + i * dur,
+                              "end": seg.start + (i + 1) * dur})
+        else:
+            for w in seg.words:
+                token = (w.word or "").strip()
+                if not token:
+                    continue
+                words.append({"word": token, "start": float(w.start), "end": float(w.end)})
     return words
 
 
@@ -391,37 +426,78 @@ def group_words_smart(words: List[Dict], max_per_block: int = 4,
     return blocks
 
 
-async def translate_blocks(blocks: List[Dict], target_lang_name: str) -> List[Dict]:
-    """Translate block texts via emergentintegrations chat (gpt-4o-mini)."""
-    from emergentintegrations.llm.chat import LlmChat, UserMessage
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=f"translate-{uuid.uuid4()}",
-        system_message=(
-            f"You are a professional subtitle translator. Translate to {target_lang_name}. "
-            "Keep translations short and punchy (these are short-video subtitles). "
-            "Return ONLY a valid JSON array of strings, same length as input, no extra text."
-        ),
-    ).with_model("openai", "gpt-4o-mini")
+async def translate_blocks(blocks: List[Dict], target_lang_name: str,
+                           api_key: str = None) -> List[Dict]:
+    """[Legacy wrapper] Dispatches to OpenAI (BYOK) or Google Translate (free)."""
+    return translate_blocks_dispatch(blocks, target_lang_name, api_key)
 
+
+# Map verbose language → Google Translate code (deep-translator uses ISO codes)
+GTRANS_LANG_MAP = {
+    "English": "en", "Spanish": "es", "Portuguese (Brazilian)": "pt",
+    "French": "fr", "German": "de", "Italian": "it",
+    "Japanese": "ja", "Chinese (Simplified)": "zh-CN",
+    "Korean": "ko", "Hindi": "hi", "Arabic": "ar",
+}
+
+
+def translate_blocks_google(blocks: List[Dict], target_lang_name: str) -> List[Dict]:
+    """Free, no-key translation via deep-translator (Google Translate web)."""
+    from deep_translator import GoogleTranslator
+    code = GTRANS_LANG_MAP.get(target_lang_name, "en")
+    translator = GoogleTranslator(source="auto", target=code)
+    src_texts = [b["text"] for b in blocks]
+    try:
+        translated = translator.translate_batch(src_texts)
+    except Exception:
+        # Fallback per-line if batch fails (rate limit, etc.)
+        translated = [translator.translate(t) or t for t in src_texts]
+    return _redistribute_timings(blocks, [str(t).strip() if t else b["text"]
+                                          for t, b in zip(translated, blocks)])
+
+
+def translate_blocks_openai(blocks: List[Dict], target_lang_name: str,
+                            api_key: str) -> List[Dict]:
+    """High-quality translation via user-provided OpenAI key (gpt-4o-mini)."""
+    from openai import OpenAI
+    client = OpenAI(api_key=api_key)
     src_texts = [b["text"] for b in blocks]
     payload = json.dumps(src_texts, ensure_ascii=False)
-    msg = UserMessage(text=f"Translate this JSON array of subtitle lines:\n{payload}")
-    response = await chat.send_message(msg)
-    raw = str(response).strip()
-    # Robust JSON extraction
+    resp = client.chat.completions.create(
+        model="gpt-4o-mini",
+        temperature=0.2,
+        messages=[
+            {"role": "system",
+             "content": (f"You are a professional subtitle translator. Translate to {target_lang_name}. "
+                         "Keep translations short and punchy (these are short-video subtitles). "
+                         "Return ONLY a valid JSON array of strings, same length as input, no extra text.")},
+            {"role": "user",
+             "content": f"Translate this JSON array of subtitle lines:\n{payload}"},
+        ],
+    )
+    raw = resp.choices[0].message.content.strip()
     m = re.search(r"\[[\s\S]*\]", raw)
     if not m:
-        raise ValueError(f"No JSON array found in response: {raw[:200]}")
+        raise ValueError(f"No JSON array found: {raw[:200]}")
     arr = json.loads(m.group(0))
     if len(arr) != len(blocks):
-        # Best-effort: pad/truncate
         arr = (arr + src_texts)[:len(blocks)]
+    return _redistribute_timings(blocks, [str(x).strip() for x in arr])
 
+
+def translate_blocks_dispatch(blocks: List[Dict], target_lang_name: str,
+                              api_key: str = None) -> List[Dict]:
+    """Dispatcher: use OpenAI if key provided, else Google Translate (free)."""
+    if api_key:
+        return translate_blocks_openai(blocks, target_lang_name, api_key)
+    return translate_blocks_google(blocks, target_lang_name)
+
+
+def _redistribute_timings(blocks: List[Dict], new_texts: List[str]) -> List[Dict]:
+    """Given new translated texts, redistribute word timings proportionally."""
     out = []
-    for b, new_text in zip(blocks, arr):
-        new_text = str(new_text).strip()
-        # Re-distribute word timings proportionally over the new tokens
+    for b, new_text in zip(blocks, new_texts):
+        new_text = new_text or b["text"]
         toks = new_text.split() or [new_text]
         dur = max(0.001, b["end"] - b["start"])
         per = dur / len(toks)
@@ -700,6 +776,7 @@ ss.setdefault("preview_path", None)
 ss.setdefault("transcribed", False)
 ss.setdefault("workdir", None)
 ss.setdefault("preset_applied", "Personalizado")
+ss.setdefault("user_openai_key", "")
 
 
 def get_workdir() -> str:
@@ -770,10 +847,50 @@ with col_input:
     language = st.selectbox("Idioma del audio", options=LANG_OPTS,
                             format_func=lambda x: x[1], index=0)
 
-    transcribe_disabled = ss.video_path is None or not EMERGENT_LLM_KEY
-    if not EMERGENT_LLM_KEY:
-        st.warning("⚠️  Configura `EMERGENT_LLM_KEY` en `.env` o en Streamlit Secrets.")
+    # ─── Engine selector ───────────────────────────────────────────────────
+    use_openai = bool(ss.get("user_openai_key"))
 
+    if not use_openai:
+        local_model = st.selectbox(
+            "🆓 Modelo local (gratis)",
+            ["tiny", "base", "small"],
+            index=1,
+            help=(
+                "tiny → ultra rápido, calidad básica (~150 MB)\n"
+                "base → recomendado, buena calidad (~250 MB)\n"
+                "small → más lento, mejor calidad (~500 MB)\n\n"
+                "Primera vez descarga el modelo (puede tardar 30-60s)."
+            ),
+            key="local_model_size",
+        )
+    else:
+        local_model = "base"
+        st.info("🚀 Usando OpenAI Whisper-1 API (con tu key personal)", icon="✓")
+
+    with st.expander("🔑  OpenAI API Key (opcional, para más velocidad/calidad)"):
+        st.caption(
+            "Si pegas tu propia key, la app usará Whisper-1 API (más rápido) y "
+            "GPT-4o-mini para traducir (mejor calidad). **Tu key nunca se guarda en disco**, "
+            "solo en la sesión del navegador."
+        )
+        new_key = st.text_input(
+            "Tu OpenAI API Key (sk-...)",
+            value=ss.get("user_openai_key", ""),
+            type="password",
+            placeholder="sk-...",
+            key="openai_key_input",
+            help="Obtén una en platform.openai.com/api-keys",
+        )
+        if new_key != ss.get("user_openai_key", ""):
+            ss.user_openai_key = new_key.strip()
+            st.rerun()
+        if ss.get("user_openai_key"):
+            if st.button("Quitar key y volver a modo gratis", type="secondary",
+                         use_container_width=True, key="btn-clear-key"):
+                ss.user_openai_key = ""
+                st.rerun()
+
+    transcribe_disabled = ss.video_path is None
     if st.button("🎙️  Transcribir", disabled=transcribe_disabled, type="primary",
                  use_container_width=True, key="btn-transcribe"):
         wd = get_workdir()
@@ -784,8 +901,15 @@ with col_input:
             st.error("Error al extraer audio con FFmpeg.")
         else:
             try:
-                with st.spinner("Transcribiendo con Whisper..."):
-                    words = asyncio.run(transcribe_with_api(audio_path, language[0]))
+                if use_openai:
+                    with st.spinner("Transcribiendo con OpenAI Whisper-1..."):
+                        words = transcribe_openai(audio_path, language[0],
+                                                  api_key=ss.user_openai_key)
+                else:
+                    with st.spinner(f"Cargando modelo `{local_model}` (primera vez tarda)..."):
+                        _load_whisper_local(local_model)
+                    with st.spinner(f"Transcribiendo con faster-whisper `{local_model}`..."):
+                        words = transcribe_local(audio_path, language[0], model_size=local_model)
                 if not words:
                     st.error("No se detectó audio inteligible en el vídeo.")
                 else:
@@ -834,11 +958,16 @@ with col_input:
         ]
         tlang = st.selectbox("Idioma destino", options=TRANSLATE_OPTS,
                              format_func=lambda x: x[1], key="translate_lang", index=0)
+        engine_label = ("GPT-4o-mini (tu OpenAI key)"
+                        if ss.get("user_openai_key") else "Google Translate (gratis)")
+        st.caption(f"Motor: **{engine_label}**")
         if st.button("✨  Traducir", type="secondary", use_container_width=True,
-                     key="btn-translate", disabled=not EMERGENT_LLM_KEY):
+                     key="btn-translate"):
             try:
                 with st.spinner(f"Traduciendo {len(ss.blocks)} bloques..."):
-                    ss.blocks = asyncio.run(translate_blocks(ss.blocks, tlang[0]))
+                    ss.blocks = translate_blocks_dispatch(
+                        ss.blocks, tlang[0], api_key=ss.get("user_openai_key") or None
+                    )
                 ss.preview_path = None
                 ss.output_path = None
                 st.success("✅  Subtítulos traducidos.")

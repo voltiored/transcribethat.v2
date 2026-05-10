@@ -21,6 +21,15 @@ Creadores de contenido vertical (Reels/TikTok/Shorts) que quieren subtítulos r�
 6. Render hardcoded vía FFmpeg listo para descargar
 7. Compatible con Streamlit Community Cloud (1GB RAM) y Emergent preview
 
+## Implemented (v4 — 2026-01) — Modo 100% gratis
+- ✅ **Transcripción local con `faster-whisper`** (CTranslate2): modelos tiny/base/small con `compute_type="int8"` → caben en 1 GB RAM. Cacheado con `@st.cache_resource`. Test: 17 palabras transcritas en local con modelo `tiny` sin internet ni API key.
+- ✅ **Traducción gratis con `deep-translator`** (Google Translate web): batch translation soportada con fallback per-line. Test: EN→ES + EN→FR funcionan sin key (Hello → Hola, Bonjour).
+- ✅ **OpenAI BYOK opcional**: input password en UI bajo expander "🔑 OpenAI API Key". Si el usuario pega su key, dispatcher usa Whisper-1 directo + GPT-4o-mini para traducir. Botón "Quitar key" para volver al modo gratis.
+- ✅ **Engine selector**: cuando no hay key → selector tiny/base/small visible. Cuando hay key → info "Usando OpenAI Whisper-1".
+- ✅ **Badge dinámico** en cabecera: muestra "faster-whisper · local · free" o "OpenAI · whisper-1" según modo activo.
+- ✅ **Sin EMERGENT_LLM_KEY**: removida del `.env` y del código por petición del usuario. La app es gratis por defecto sin keys de ningún tipo.
+- ✅ Removed `emergentintegrations` dependency (sustituida por `openai` + `faster-whisper` + `deep-translator`).
+
 ## Implemented (v3 — 2026-01)
 - ✅ **Smart split inteligente**: detecta pausas del hablante (`>0.35s`) + signos de puntuación (`.!?` → corte fuerte; `,;:` → corte suave) + límite máximo configurable. Resultado: pacing natural alineado con sentencias en lugar de chunks mecánicos. Test: "Hello! This is a test. Subtitles work great." → 6 bloques smart vs 4 fixed.
 - ✅ **Marca de agua (watermark)**: texto + 6 posiciones (4 esquinas + arriba/abajo centro), tamaño 18-80px, color personalizable, opacidad 0.1-1.0, fuente. Implementado como segundo `[V4+ Style]` en ASS con dialogue line cubriendo `[0, video_duration]`. Probado todas las posiciones + render + preview.
