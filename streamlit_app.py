@@ -257,7 +257,7 @@ st.markdown("""
         <div class="tt-logo-mark">TT</div>
         <div>
             <p class="tt-title">Transcribe That!</p>
-            <p class="tt-subtitle">Subtítulos automáticos · 100% gratis · ¿To Judi? </p>
+            <p class="tt-subtitle">Subtítulos automáticos · 100% gratis · ¿Para Judi? </p>
         </div>
     </div>
 </div>
