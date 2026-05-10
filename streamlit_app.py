@@ -256,11 +256,10 @@ st.markdown("""
     <div class="tt-logo">
         <div class="tt-logo-mark">TT</div>
         <div>
-            <p class="tt-title">TranscribeThat</p>
-            <p class="tt-subtitle">Subtítulos automáticos · 100% gratis · Karaoke · Traducción · Presets virales</p>
+            <p class="tt-title">Transcribe That!</p>
+            <p class="tt-subtitle">Subtítulos automáticos · 100% gratis · ¿To Judi? </p>
         </div>
     </div>
-    <div class="tt-badge" id="engine-badge">{ENGINE_BADGE}</div>
 </div>
 """.replace("{ENGINE_BADGE}", "OpenAI · whisper-1" if st.session_state.get("user_openai_key") else "faster-whisper · local · free"), unsafe_allow_html=True)
 
