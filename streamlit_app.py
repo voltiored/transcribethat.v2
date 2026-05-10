@@ -785,11 +785,10 @@ def split_emphasis_to_solo(blocks: List[Dict]) -> List[Dict]:
 
 
 def _alignment_code(align: str, position: str) -> int:
-    pos = "Abajo" if position == "Personalizada 🎯" else position
     m = {("Izquierda", "Abajo"): 1, ("Centro", "Abajo"): 2, ("Derecha", "Abajo"): 3,
          ("Izquierda", "Centro"): 4, ("Centro", "Centro"): 5, ("Derecha", "Centro"): 6,
          ("Izquierda", "Arriba"): 7, ("Centro", "Arriba"): 8, ("Derecha", "Arriba"): 9}
-    return m.get((align, pos), 2)
+    return m.get((align, position), 2)
 
 
 def build_ass_file(blocks: List[Dict], style: Dict, video_w: int = 1080, video_h: int = 1920,
@@ -885,23 +884,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     else:
                         parts.append("{\\k%d\\1c%s}%s {\\1c%s}" % (cs, primary, token, secondary))
                 text = "".join(parts).rstrip(" ").rstrip("{\\1c" + secondary + "}")
-        elif blk.get("words") and any(w.get("is_emphasis") for w in blk["words"]):
-            # Non-karaoke mode with emphasis words: highlight them in color + bigger scale
-            emphasis_color = hex_to_ass_color(style.get("karaoke_emphasis_color", "#FFD700"))
-            emphasis_scale = int(style.get("karaoke_emphasis_scale", 130))
-            uppercase = bool(style.get("uppercase"))
-            parts = []
-            for w in blk["words"]:
-                token = w["word"].replace("{", "(").replace("}", ")")
-                if uppercase:
-                    token = token.upper()
-                if w.get("is_emphasis"):
-                    parts.append("{\\1c%s\\fscx%d\\fscy%d}%s{\\fscx100\\fscy100\\1c%s}"
-                                 % (emphasis_color, emphasis_scale, emphasis_scale,
-                                    token, primary))
-                else:
-                    parts.append(token)
-            text = " ".join(parts)
         else:
             raw = blk["text"]
             if style.get("uppercase"):
@@ -1420,35 +1402,6 @@ with col_style:
         color = st.color_picker("Color de texto", get_default("color", "#FFFFFF"))
     with cc2:
         outline_color = st.color_picker("Color contorno", get_default("outline_color", "#000000"))
-    # Inject live color preview badges next to each picker label
-    st.markdown(f"""
-    <style>
-    /* Color de texto swatch */
-    div[data-testid="stColorPicker"]:nth-of-type(1) label::after {{
-        content: '';
-        display: inline-block;
-        width: 14px; height: 14px;
-        background: {color};
-        border-radius: 4px;
-        border: 1px solid rgba(255,255,255,0.25);
-        margin-left: 8px;
-        vertical-align: middle;
-        box-shadow: 0 0 6px {color}88;
-    }}
-    /* Color contorno swatch */
-    div[data-testid="stColorPicker"]:nth-of-type(2) label::after {{
-        content: '';
-        display: inline-block;
-        width: 14px; height: 14px;
-        background: {outline_color};
-        border-radius: 4px;
-        border: 1px solid rgba(255,255,255,0.25);
-        margin-left: 8px;
-        vertical-align: middle;
-        box-shadow: 0 0 6px {outline_color}88;
-    }}
-    </style>
-    """, unsafe_allow_html=True)
 
     BG_OPTS = ["Transparente", "Caja negra", "Color personalizado"]
     bg_default = get_default("bg_mode", "Transparente")
@@ -1461,20 +1414,12 @@ with col_style:
         bg_color = st.color_picker("Color de fondo",
                                    get_default("bg_color", "#8A2BE2"))
 
-    POS_OPTS = ["Arriba", "Centro", "Abajo", "Personalizada 🎯"]
+    POS_OPTS = ["Arriba", "Centro", "Abajo"]
     pos_default = get_default("position", "Abajo")
     position = st.selectbox(
         "Posición vertical", POS_OPTS,
         index=POS_OPTS.index(pos_default) if pos_default in POS_OPTS else 2,
     )
-    custom_margin_v = int(get_default("custom_margin_v", 80))
-    if position == "Personalizada 🎯":
-        custom_margin_v = st.slider(
-            "Margen vertical (px)", 0, 900, custom_margin_v, step=10,
-            help="0 = pegado al borde inferior, valores altos suben el texto. "
-                 "Para vídeo 1080×1920: ~80 es muy abajo, ~900 es muy arriba.",
-        )
-        ss["_pre_custom_margin_v"] = custom_margin_v
 
     AL_OPTS = ["Izquierda", "Centro", "Derecha"]
     al_default = get_default("align", "Centro")
@@ -1490,38 +1435,20 @@ with col_style:
     karaoke_unspoken_color = "#9CA3AF"
     karaoke_emphasis_color = get_default("karaoke_emphasis_color", "#FFD700")
     karaoke_emphasis_scale = int(get_default("karaoke_emphasis_scale", 130))
-
-    # Show emphasis controls whenever karaoke is on OR emphasis has been detected
-    show_emphasis_controls = karaoke or ss.get("emphasis_detected", False)
-    if show_emphasis_controls:
-        if karaoke:
-            kc1, kc2 = st.columns(2)
-            with kc1:
-                karaoke_unspoken_color = st.color_picker(
-                    "Color sin hablar",
-                    get_default("karaoke_unspoken_color", "#FFFFFF"),
-                    help="Color de palabras que aún no se han pronunciado.",
-                )
-            with kc2:
-                karaoke_emphasis_color = st.color_picker(
-                    "Color énfasis ✨",
-                    karaoke_emphasis_color,
-                    help="Color de palabras destacadas con 'Detectar palabras clave PRO'.",
-                )
-        else:
-            st.caption("✨ **Palabras clave detectadas** — ajusta cómo se resaltan:")
-            ec1, ec2 = st.columns(2)
-            with ec1:
-                karaoke_emphasis_color = st.color_picker(
-                    "Color énfasis ✨",
-                    karaoke_emphasis_color,
-                    help="Color de las palabras clave resaltadas.",
-                )
-            with ec2:
-                karaoke_emphasis_scale = st.slider(
-                    "Tamaño énfasis %", 100, 200, karaoke_emphasis_scale, step=5,
-                    help="Escala de las palabras clave (100 = igual que el resto).",
-                )
+    if karaoke:
+        kc1, kc2 = st.columns(2)
+        with kc1:
+            karaoke_unspoken_color = st.color_picker(
+                "Color sin hablar",
+                get_default("karaoke_unspoken_color", "#FFFFFF"),
+                help="Color de palabras que aún no se han pronunciado.",
+            )
+        with kc2:
+            karaoke_emphasis_color = st.color_picker(
+                "Color énfasis ✨",
+                karaoke_emphasis_color,
+                help="Color de palabras destacadas con 'Detectar palabras clave PRO'.",
+            )
 
     with st.expander("⚙️  Efectos avanzados"):
         outline_w = st.slider("Grosor del contorno", 0.0, 6.0,
@@ -1567,7 +1494,6 @@ with col_style:
         "karaoke": karaoke, "karaoke_unspoken_color": karaoke_unspoken_color,
         "karaoke_emphasis_color": karaoke_emphasis_color,
         "karaoke_emphasis_scale": karaoke_emphasis_scale,
-        "custom_margin_v": custom_margin_v,
     }
 
     st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
@@ -1623,34 +1549,11 @@ with col_editor:
 
     if not ss.video_path:
         st.markdown("""
-        <div class="tt-preview-empty tt-drop-zone" id="tt-drop-zone"
-             ondragover="event.preventDefault(); this.classList.add('tt-drop-active');"
-             ondragleave="this.classList.remove('tt-drop-active');"
-             ondrop="
-               event.preventDefault();
-               this.classList.remove('tt-drop-active');
-               var files = event.dataTransfer.files;
-               if (files.length > 0) {
-                 var inp = window.parent.document.querySelector('[data-testid=stFileUploaderDropzoneInput]');
-                 if (!inp) inp = window.parent.document.querySelector('input[type=file]');
-                 if (inp) {
-                   var dt = new DataTransfer();
-                   dt.items.add(files[0]);
-                   inp.files = dt.files;
-                   inp.dispatchEvent(new Event('change', {bubbles:true}));
-                 }
-               }
-             ">
+        <div class="tt-preview-empty">
             <div class="tt-preview-empty-icon">🎬</div>
             <div class="tt-preview-empty-title">Sube un vídeo para empezar</div>
-            <div style="font-size:13px;margin-bottom:10px;">Arrastra tu vídeo aquí o usa el botón de la izquierda</div>
-            <div style="font-size:11px;color:var(--text-dim);font-family:'JetBrains Mono',monospace;">MP4 · MOV · MKV · WEBM</div>
+            <div style="font-size:13px;">Aquí verás el preview con tu estilo aplicado</div>
         </div>
-        <style>
-        .tt-drop-zone { cursor: pointer; transition: border-color 0.2s ease, background 0.2s ease; }
-        .tt-drop-active { border-color: var(--accent) !important; background: rgba(138,43,226,0.10) !important; }
-        .tt-drop-active .tt-preview-empty-icon { transform: scale(1.15); }
-        </style>
         """, unsafe_allow_html=True)
     elif not ss.blocks:
         st.markdown("""
