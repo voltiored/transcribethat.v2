@@ -890,21 +890,16 @@ with col_input:
 
     st.markdown("&nbsp;", unsafe_allow_html=True)
 
-    with st.container(border=True):
-        st.markdown('<div class="tt-cajita-label">Palabras por subtítulo</div>',
-                    unsafe_allow_html=True)
-        words_per_block = st.radio(
-            "words", options=[2, 3, 4], index=1, horizontal=True,
-            label_visibility="collapsed",
-            help="Bloques cortos = más retención.",
-        )
-
-    smart_split = st.checkbox(
-        "🧠  Split inteligente (pausas + signos)",
-        value=True,
-        help="Detecta pausas del hablante y signos de puntuación para cortar bloques de forma natural. "
-             "Ignora 'palabras por subtítulo' como límite máximo.",
+    words_per_block = st.selectbox(
+        "Palabras por subtítulo",
+        options=[2, 3, 4],
+        index=1,
+        help="Bloques cortos = más retención. (Se usa como límite máximo; el split inteligente "
+             "corta antes en pausas y signos de puntuación.)",
     )
+
+    # Split inteligente siempre activo
+    smart_split = True
 
     LANG_OPTS = [("auto", "Detectar automáticamente"), ("es", "Español"), ("en", "English"),
                  ("pt", "Português"), ("fr", "Français"), ("de", "Deutsch"),
@@ -1067,10 +1062,14 @@ with col_style:
 
     FONTS = ["Inter", "Montserrat", "Arial", "Impact", "Bebas Neue", "Poppins",
              "Roboto", "Helvetica", "Verdana", "Tahoma"]
-    font = st.selectbox("Tipografía", FONTS,
-                        index=FONTS.index(get_default("font", "Impact"))
-                        if get_default("font", "Impact") in FONTS else 3)
-    size = st.slider("Tamaño de fuente", 24, 120, get_default("size", 72), step=2)
+    with st.expander("🔤  Tipografía & tamaño", expanded=False):
+        font = st.selectbox(
+            "Tipografía", FONTS,
+            index=FONTS.index(get_default("font", "Impact"))
+            if get_default("font", "Impact") in FONTS else 3,
+        )
+        size = st.slider("Tamaño de fuente", 24, 120, get_default("size", 72), step=2)
+        bold = st.checkbox("Negrita", value=get_default("bold", True))
 
     cc1, cc2 = st.columns(2)
     with cc1:
@@ -1078,44 +1077,30 @@ with col_style:
     with cc2:
         outline_color = st.color_picker("Color contorno", get_default("outline_color", "#000000"))
 
-    bold = st.checkbox("Negrita", value=get_default("bold", True))
-
     BG_OPTS = ["Transparente", "Caja negra", "Color personalizado"]
     bg_default = get_default("bg_mode", "Transparente")
-    with st.container(border=True):
-        st.markdown('<div class="tt-cajita-label">Fondo del texto</div>',
-                    unsafe_allow_html=True)
-        bg_mode = st.radio(
-            "bg", BG_OPTS, horizontal=False,
-            index=BG_OPTS.index(bg_default) if bg_default in BG_OPTS else 0,
-            label_visibility="collapsed",
-        )
-        bg_color = "#000000"
-        if bg_mode == "Color personalizado":
-            bg_color = st.color_picker("Color de fondo",
-                                       get_default("bg_color", "#8A2BE2"))
+    bg_mode = st.selectbox(
+        "Fondo del texto", BG_OPTS,
+        index=BG_OPTS.index(bg_default) if bg_default in BG_OPTS else 0,
+    )
+    bg_color = "#000000"
+    if bg_mode == "Color personalizado":
+        bg_color = st.color_picker("Color de fondo",
+                                   get_default("bg_color", "#8A2BE2"))
 
     POS_OPTS = ["Arriba", "Centro", "Abajo"]
     pos_default = get_default("position", "Abajo")
-    with st.container(border=True):
-        st.markdown('<div class="tt-cajita-label">Posición vertical</div>',
-                    unsafe_allow_html=True)
-        position = st.radio(
-            "pos", POS_OPTS, horizontal=True,
-            index=POS_OPTS.index(pos_default) if pos_default in POS_OPTS else 2,
-            label_visibility="collapsed",
-        )
+    position = st.selectbox(
+        "Posición vertical", POS_OPTS,
+        index=POS_OPTS.index(pos_default) if pos_default in POS_OPTS else 2,
+    )
 
     AL_OPTS = ["Izquierda", "Centro", "Derecha"]
     al_default = get_default("align", "Centro")
-    with st.container(border=True):
-        st.markdown('<div class="tt-cajita-label">Alineación</div>',
-                    unsafe_allow_html=True)
-        align = st.radio(
-            "al", AL_OPTS, horizontal=True,
-            index=AL_OPTS.index(al_default) if al_default in AL_OPTS else 1,
-            label_visibility="collapsed",
-        )
+    align = st.selectbox(
+        "Alineación", AL_OPTS,
+        index=AL_OPTS.index(al_default) if al_default in AL_OPTS else 1,
+    )
 
     # Karaoke
     karaoke = st.checkbox("🎤  Animación karaoke (palabra-por-palabra)",
