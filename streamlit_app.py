@@ -165,6 +165,66 @@ label, .stSelectbox label, .stTextInput label, .stTextArea label, .stNumberInput
     font-weight: 600 !important;
 }
 
+/* Cajitas — bordered containers wrapping label + control */
+[data-testid="stVerticalBlockBorderWrapper"] {
+    background: var(--bg-1) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 14px !important;
+    padding: 12px 14px !important;
+    margin-bottom: 12px !important;
+    transition: border-color 0.15s ease;
+}
+[data-testid="stVerticalBlockBorderWrapper"]:hover {
+    border-color: rgba(138, 43, 226, 0.35) !important;
+}
+.tt-cajita-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 10px;
+    display: flex; align-items: center; gap: 8px;
+}
+.tt-cajita-label::before {
+    content: ''; width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 8px rgba(138, 43, 226, 0.6);
+}
+
+/* Centered preview frame */
+.tt-preview-wrap {
+    display: flex; flex-direction: column; align-items: center;
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    padding: 18px;
+    margin-bottom: 18px;
+    position: relative;
+    overflow: hidden;
+}
+.tt-preview-wrap::before {
+    content: ''; position: absolute; inset: 0;
+    background: radial-gradient(circle at 50% 0%, rgba(138,43,226,0.08), transparent 60%);
+    pointer-events: none;
+}
+.tt-preview-empty {
+    width: 100%; min-height: 360px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: linear-gradient(180deg, var(--bg-2) 0%, var(--bg-0) 100%);
+    border: 2px dashed var(--border);
+    border-radius: 12px;
+    color: var(--text-dim);
+    text-align: center; padding: 30px;
+    z-index: 1;
+}
+.tt-preview-empty-icon {
+    font-size: 44px; margin-bottom: 14px; opacity: 0.7;
+}
+.tt-preview-empty-title {
+    font-size: 16px; font-weight: 700; color: var(--text); margin-bottom: 6px;
+}
+
 .tt-time { font-family: 'JetBrains Mono', monospace; font-size: 11px;
     color: var(--accent-hov); font-weight: 600; }
 
@@ -788,7 +848,7 @@ def get_workdir() -> str:
 # ──────────────────────────────────────────────────────────────────────────────
 #  3-COLUMN LAYOUT
 # ──────────────────────────────────────────────────────────────────────────────
-col_input, col_editor, col_style = st.columns([1.05, 1.25, 1.15], gap="large")
+col_input, col_editor, col_style = st.columns([1.0, 1.55, 1.05], gap="large")
 
 # ─── COLUMN 1: INPUT & TRANSCRIPTION ──────────────────────────────────────────
 with col_input:
@@ -830,9 +890,14 @@ with col_input:
 
     st.markdown("&nbsp;", unsafe_allow_html=True)
 
-    words_per_block = st.radio("Palabras por subtítulo", options=[2, 3, 4],
-                               index=1, horizontal=True,
-                               help="Bloques cortos = más retención.")
+    with st.container(border=True):
+        st.markdown('<div class="tt-cajita-label">Palabras por subtítulo</div>',
+                    unsafe_allow_html=True)
+        words_per_block = st.radio(
+            "words", options=[2, 3, 4], index=1, horizontal=True,
+            label_visibility="collapsed",
+            help="Bloques cortos = más retención.",
+        )
 
     smart_split = st.checkbox(
         "🧠  Split inteligente (pausas + signos)",
@@ -976,68 +1041,7 @@ with col_input:
                 st.error(f"Error al traducir: {e}")
 
 
-# ─── COLUMN 2: SEGMENT EDITOR ────────────────────────────────────────────────
-with col_editor:
-    st.markdown('<div class="tt-card-title"><span class="tt-step">2</span>Editor de subtítulos</div>', unsafe_allow_html=True)
-
-    if not ss.blocks:
-        st.markdown("""
-        <div class="tt-card" style="text-align:center;padding:50px 20px;">
-            <div style="font-size:36px;margin-bottom:12px;">✏️</div>
-            <div style="color:var(--text);font-weight:600;margin-bottom:6px;">Aún no hay subtítulos</div>
-            <div style="color:var(--text-dim);font-size:13px;">Sube un vídeo y haz clic en <b>Transcribir</b> para empezar.</div>
-        </div>
-        """, unsafe_allow_html=True)
-    else:
-        st.caption(f"📝 {len(ss.blocks)} bloques · edita el texto si hay errores")
-        st.markdown('<div style="max-height:560px; overflow-y:auto; padding-right:6px;">', unsafe_allow_html=True)
-        for idx, blk in enumerate(ss.blocks):
-            tcol1, tcol2 = st.columns([2, 1])
-            with tcol1:
-                st.markdown(
-                    f'<div class="tt-time">▸ {seconds_to_ass_time(blk["start"])} → {seconds_to_ass_time(blk["end"])}</div>',
-                    unsafe_allow_html=True,
-                )
-            with tcol2:
-                st.markdown(
-                    f'<div class="tt-time" style="text-align:right;color:var(--text-dim);">#{idx + 1}</div>',
-                    unsafe_allow_html=True,
-                )
-            new_text = st.text_input(f"block_{blk['id']}", value=blk["text"],
-                                     label_visibility="collapsed", key=f"txt_{blk['id']}")
-            if new_text != blk["text"]:
-                ss.blocks[idx]["text"] = new_text
-                # Re-distribute word timings if text was edited (keep approximate sync)
-                toks = new_text.split() or [new_text]
-                dur = max(0.001, blk["end"] - blk["start"])
-                per = dur / len(toks)
-                ss.blocks[idx]["words"] = [{"word": t, "start": blk["start"] + i * per,
-                                            "end": blk["start"] + (i + 1) * per}
-                                           for i, t in enumerate(toks)]
-        st.markdown("</div>", unsafe_allow_html=True)
-
-        # ─── Export SRT/VTT ─────────────────────────────────────────────────
-        st.markdown("---")
-        st.markdown('<div class="tt-card-title" style="margin-bottom:8px;">📤 Exportar subtítulos</div>',
-                    unsafe_allow_html=True)
-        ec1, ec2 = st.columns(2)
-        with ec1:
-            st.download_button(
-                "⬇️  SRT", data=build_srt(ss.blocks),
-                file_name=f"{Path(ss.video_name or 'subs').stem}.srt",
-                mime="application/x-subrip",
-                use_container_width=True, key="dl-srt",
-            )
-        with ec2:
-            st.download_button(
-                "⬇️  VTT", data=build_vtt(ss.blocks),
-                file_name=f"{Path(ss.video_name or 'subs').stem}.vtt",
-                mime="text/vtt",
-                use_container_width=True, key="dl-vtt",
-            )
-
-
-# ─── COLUMN 3: STYLE & RENDER ────────────────────────────────────────────────
+# ─── COLUMN 3: STYLE & RENDER (renders BEFORE col_editor so style is computed) ─
 with col_style:
     st.markdown('<div class="tt-card-title"><span class="tt-step">3</span>Estilo &amp; Render</div>', unsafe_allow_html=True)
 
@@ -1078,20 +1082,40 @@ with col_style:
 
     BG_OPTS = ["Transparente", "Caja negra", "Color personalizado"]
     bg_default = get_default("bg_mode", "Transparente")
-    bg_mode = st.radio("Fondo del texto", BG_OPTS, horizontal=False,
-                       index=BG_OPTS.index(bg_default) if bg_default in BG_OPTS else 0)
-    bg_color = "#000000"
-    if bg_mode == "Color personalizado":
-        bg_color = st.color_picker("Color de fondo", get_default("bg_color", "#8A2BE2"))
+    with st.container(border=True):
+        st.markdown('<div class="tt-cajita-label">Fondo del texto</div>',
+                    unsafe_allow_html=True)
+        bg_mode = st.radio(
+            "bg", BG_OPTS, horizontal=False,
+            index=BG_OPTS.index(bg_default) if bg_default in BG_OPTS else 0,
+            label_visibility="collapsed",
+        )
+        bg_color = "#000000"
+        if bg_mode == "Color personalizado":
+            bg_color = st.color_picker("Color de fondo",
+                                       get_default("bg_color", "#8A2BE2"))
 
     POS_OPTS = ["Arriba", "Centro", "Abajo"]
     pos_default = get_default("position", "Abajo")
-    position = st.radio("Posición vertical", POS_OPTS, horizontal=True,
-                        index=POS_OPTS.index(pos_default) if pos_default in POS_OPTS else 2)
+    with st.container(border=True):
+        st.markdown('<div class="tt-cajita-label">Posición vertical</div>',
+                    unsafe_allow_html=True)
+        position = st.radio(
+            "pos", POS_OPTS, horizontal=True,
+            index=POS_OPTS.index(pos_default) if pos_default in POS_OPTS else 2,
+            label_visibility="collapsed",
+        )
+
     AL_OPTS = ["Izquierda", "Centro", "Derecha"]
     al_default = get_default("align", "Centro")
-    align = st.radio("Alineación", AL_OPTS, horizontal=True,
-                     index=AL_OPTS.index(al_default) if al_default in AL_OPTS else 1)
+    with st.container(border=True):
+        st.markdown('<div class="tt-cajita-label">Alineación</div>',
+                    unsafe_allow_html=True)
+        align = st.radio(
+            "al", AL_OPTS, horizontal=True,
+            index=AL_OPTS.index(al_default) if al_default in AL_OPTS else 1,
+            label_visibility="collapsed",
+        )
 
     # Karaoke
     karaoke = st.checkbox("🎤  Animación karaoke (palabra-por-palabra)",
@@ -1151,23 +1175,6 @@ with col_style:
 
     st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
 
-    # ─── Live Preview ───────────────────────────────────────────────────────
-    preview_disabled = not (ss.video_path and ss.blocks)
-    if st.button("👁️  Vista previa del estilo", disabled=preview_disabled,
-                 type="secondary", use_container_width=True, key="btn-preview"):
-        wd = get_workdir()
-        out_img = os.path.join(wd, f"preview_{uuid.uuid4().hex[:6]}.jpg")
-        with st.spinner("Generando preview..."):
-            ok, err = render_preview_frame(ss.video_path, ss.blocks, style, out_img,
-                                           watermark=watermark)
-        if ok:
-            ss.preview_path = out_img
-        else:
-            st.error(f"Error al generar preview: {err[:200]}")
-
-    if ss.preview_path and os.path.exists(ss.preview_path):
-        st.image(ss.preview_path, caption="Preview con tu estilo aplicado", use_container_width=True)
-
     # ─── Render ────────────────────────────────────────────────────────────
     render_disabled = not (ss.video_path and ss.blocks)
     if st.button("🎬  Renderizar vídeo final", disabled=render_disabled,
@@ -1206,4 +1213,127 @@ with col_style:
                 mime="video/mp4",
                 use_container_width=True,
                 key="btn-download",
+            )
+
+
+# ─── COLUMN 2 (renders LAST so we can use computed style/watermark) ──────────
+with col_editor:
+    st.markdown('<div class="tt-card-title"><span class="tt-step">2</span>Preview &amp; Editor</div>',
+                unsafe_allow_html=True)
+
+    # ─── Live Preview (centered, always visible) ────────────────────────────
+    st.markdown('<div class="tt-preview-wrap">', unsafe_allow_html=True)
+
+    if not ss.video_path:
+        st.markdown("""
+        <div class="tt-preview-empty">
+            <div class="tt-preview-empty-icon">🎬</div>
+            <div class="tt-preview-empty-title">Sube un vídeo para empezar</div>
+            <div style="font-size:13px;">Aquí verás el preview con tu estilo aplicado</div>
+        </div>
+        """, unsafe_allow_html=True)
+    elif not ss.blocks:
+        st.markdown("""
+        <div class="tt-preview-empty">
+            <div class="tt-preview-empty-icon">⏳</div>
+            <div class="tt-preview-empty-title">Vídeo cargado</div>
+            <div style="font-size:13px;">Pulsa <b>Transcribir</b> en la columna izquierda para generar los subtítulos.</div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        # Auto-generate preview if not yet generated
+        if not ss.preview_path or not os.path.exists(ss.preview_path):
+            try:
+                wd = get_workdir()
+                out_img = os.path.join(wd, f"preview_{uuid.uuid4().hex[:6]}.jpg")
+                with st.spinner("Generando preview..."):
+                    ok, _err = render_preview_frame(ss.video_path, ss.blocks, style,
+                                                    out_img, watermark=watermark)
+                if ok:
+                    ss.preview_path = out_img
+            except Exception:
+                pass
+
+        if ss.preview_path and os.path.exists(ss.preview_path):
+            pcol_l, pcol_c, pcol_r = st.columns([1, 2.2, 1])
+            with pcol_c:
+                st.image(ss.preview_path, use_container_width=True)
+            if st.button("🔄  Actualizar preview con el estilo actual",
+                         type="secondary", use_container_width=True, key="btn-refresh-preview"):
+                wd = get_workdir()
+                out_img = os.path.join(wd, f"preview_{uuid.uuid4().hex[:6]}.jpg")
+                with st.spinner("Regenerando preview..."):
+                    ok, err = render_preview_frame(ss.video_path, ss.blocks, style,
+                                                   out_img, watermark=watermark)
+                if ok:
+                    ss.preview_path = out_img
+                    st.rerun()
+                else:
+                    st.error(f"Error: {err[:200]}")
+        else:
+            st.markdown("""
+            <div class="tt-preview-empty">
+                <div class="tt-preview-empty-icon">⚠️</div>
+                <div class="tt-preview-empty-title">No se pudo generar el preview</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # ─── Editor de subtítulos ─────────────────────────────────────────────
+    st.markdown('<div class="tt-card-title" style="margin-top:18px;">✏️ Editor de subtítulos</div>',
+                unsafe_allow_html=True)
+    if not ss.blocks:
+        st.markdown("""
+        <div class="tt-card" style="text-align:center;padding:30px 20px;">
+            <div style="color:var(--text-dim);font-size:13px;">Aún no hay subtítulos. Transcribe primero.</div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.caption(f"📝 {len(ss.blocks)} bloques · edita el texto si hay errores")
+        st.markdown('<div style="max-height:380px; overflow-y:auto; padding-right:6px;">',
+                    unsafe_allow_html=True)
+        for idx, blk in enumerate(ss.blocks):
+            tcol1, tcol2 = st.columns([2, 1])
+            with tcol1:
+                st.markdown(
+                    f'<div class="tt-time">▸ {seconds_to_ass_time(blk["start"])} → {seconds_to_ass_time(blk["end"])}</div>',
+                    unsafe_allow_html=True,
+                )
+            with tcol2:
+                st.markdown(
+                    f'<div class="tt-time" style="text-align:right;color:var(--text-dim);">#{idx + 1}</div>',
+                    unsafe_allow_html=True,
+                )
+            new_text = st.text_input(f"block_{blk['id']}", value=blk["text"],
+                                     label_visibility="collapsed", key=f"txt_{blk['id']}")
+            if new_text != blk["text"]:
+                ss.blocks[idx]["text"] = new_text
+                toks = new_text.split() or [new_text]
+                dur = max(0.001, blk["end"] - blk["start"])
+                per = dur / len(toks)
+                ss.blocks[idx]["words"] = [{"word": t, "start": blk["start"] + i * per,
+                                            "end": blk["start"] + (i + 1) * per}
+                                           for i, t in enumerate(toks)]
+                ss.preview_path = None  # invalidate so next refresh regenerates
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        # ─── Export SRT/VTT ─────────────────────────────────────────────────
+        st.markdown("---")
+        st.markdown('<div class="tt-card-title" style="margin-bottom:8px;">📤 Exportar subtítulos</div>',
+                    unsafe_allow_html=True)
+        ec1, ec2 = st.columns(2)
+        with ec1:
+            st.download_button(
+                "⬇️  SRT", data=build_srt(ss.blocks),
+                file_name=f"{Path(ss.video_name or 'subs').stem}.srt",
+                mime="application/x-subrip",
+                use_container_width=True, key="dl-srt",
+            )
+        with ec2:
+            st.download_button(
+                "⬇️  VTT", data=build_vtt(ss.blocks),
+                file_name=f"{Path(ss.video_name or 'subs').stem}.vtt",
+                mime="text/vtt",
+                use_container_width=True, key="dl-vtt",
             )
