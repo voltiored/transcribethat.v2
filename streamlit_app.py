@@ -291,7 +291,7 @@ st.markdown("""
         <div class="tt-logo-mark">TT</div>
         <div>
             <p class="tt-title">TranscribeThat</p>
-            <p class="tt-subtitle">Subtítulos automáticos · 100% gratis · Karaoke · Traducción · Presets virales</p>
+            <p class="tt-subtitle">Subtítulos automàtics · 100% gratuït · Karaoke · Traducció · Presets virals</p>
         </div>
     </div>
     <div class="tt-badge" id="engine-badge">{ENGINE_BADGE}</div>
@@ -485,10 +485,7 @@ def group_words_into_blocks(words: List[Dict], n: int) -> List[Dict]:
 
 def group_words_smart(words: List[Dict], max_per_block: int = 4,
                      pause_threshold: float = 0.35) -> List[Dict]:
-    """Smart splitter: breaks on pauses (>threshold), strong punctuation, or max length.
-
-    More natural pacing than fixed-N chunks: speaker pauses → new block.
-    """
+    """Smart splitter: breaks on pauses (>threshold), strong punctuation, or max length."""
     blocks: List[Dict] = []
     current: List[Dict] = []
     for i, w in enumerate(words):
@@ -526,12 +523,14 @@ async def translate_blocks(blocks: List[Dict], target_lang_name: str,
     return translate_blocks_dispatch(blocks, target_lang_name, api_key)
 
 
+# ── CHANGE 1: Added "Catalan": "ca" to GTRANS_LANG_MAP ──────────────────────
 # Map verbose language → Google Translate code (deep-translator uses ISO codes)
 GTRANS_LANG_MAP = {
     "English": "en", "Spanish": "es", "Portuguese (Brazilian)": "pt",
     "French": "fr", "German": "de", "Italian": "it",
     "Japanese": "ja", "Chinese (Simplified)": "zh-CN",
     "Korean": "ko", "Hindi": "hi", "Arabic": "ar",
+    "Catalan": "ca",
 }
 
 
@@ -602,9 +601,9 @@ def _redistribute_timings(blocks: List[Dict], new_texts: List[str]) -> List[Dict
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-#  EMPHASIS DETECTION (Hormozi PRO style: highlight key words bigger + colored)
+#  EMPHASIS DETECTION
 # ──────────────────────────────────────────────────────────────────────────────
-# Multilingual hardcoded "impact words" used as FREE fallback when no Claude key
+# ── CHANGE 2: Added Catalan impact words section ─────────────────────────────
 IMPACT_WORDS = {
     # ES
     "dinero", "secreto", "verdad", "nunca", "siempre", "importante", "increíble",
@@ -624,6 +623,11 @@ IMPACT_WORDS = {
     # FR
     "argent", "secret", "vérité", "jamais", "toujours", "important", "incroyable",
     "millions", "meilleur", "pire", "parfait", "gratuit", "maintenant",
+    # CA (Catalan)
+    "diners", "secret", "secrets", "veritat", "mai", "sempre", "important",
+    "increïble", "milions", "millor", "pitjor", "perfecte", "impossible",
+    "gratis", "ara", "ràpid", "fàcil", "garantit", "exclusiu", "truc", "trucs",
+    "error", "errors", "fracàs", "èxit", "guanyar", "perdre", "viral", "èpic",
 }
 
 # Long-but-meaningless words to exclude from "long word" detection
@@ -642,6 +646,10 @@ STOPWORDS_LONG = {
     "porque", "quando", "depois", "antes", "durante", "mediante", "embora",
     # FR
     "parce", "lorsque", "pendant", "puisque", "toutefois", "cependant",
+    # CA (Catalan)
+    "perquè", "quan", "mentre", "durant", "però", "també", "tampoc", "nosaltres",
+    "vosaltres", "encara", "sempre", "sovint", "potser", "aquest", "aquesta",
+    "aquells", "aquelles", "dintre", "davant", "darrere", "través",
 }
 
 
@@ -649,52 +657,38 @@ def detect_emphasis_free(blocks: List[Dict],
                         target_ratio: float = 0.15,
                         min_distance: int = 3,
                         long_word_min_len: int = 7) -> List[Dict]:
-    """Free emphasis detection (no API key required).
-
-    Strategy:
-      • Score every word: IMPACT_WORDS = 100, numbers = 80, long words = 50.
-      • Pick top ~15% of words by priority (rounded UP for short text).
-      • Enforce minimum distance (default 3 words apart) so emphasis is spread,
-        not clustered → "de vez en cuando" effect.
-    """
+    """Free emphasis detection (no API key required)."""
     import string
     import math
 
-    # Flatten all words
     all_words = []
     for b in blocks:
         for w in b.get("words", []):
-            w["is_emphasis"] = False  # reset
+            w["is_emphasis"] = False
             all_words.append(w)
 
     if not all_words:
         return blocks
 
-    PUNCT = string.punctuation + "¿¡«»…—–“”"
-    candidates = []  # (priority, index)
+    PUNCT = string.punctuation + "¿¡«»…—–"""
+    candidates = []
     for idx, w in enumerate(all_words):
         token = w["word"]
         clean = token.lower().strip(PUNCT)
         priority = 0
-        # Top priority: hand-curated impact words
         if clean in IMPACT_WORDS:
             priority = 100
-        # High priority: contains digits (numbers, $100, 5x, etc.)
         elif any(c.isdigit() for c in token):
             priority = 80
-        # Medium priority: long words that aren't stopwords
         elif len(clean) >= long_word_min_len and clean not in STOPWORDS_LONG:
             priority = 50
-        # Bonus: ALL CAPS words (likely emphasis already)
         if token.isupper() and len(clean) > 2:
             priority = max(priority, 70)
         if priority > 0:
             candidates.append((priority, idx))
 
-    # Sort by priority desc, then by position (stable for ties)
     candidates.sort(key=lambda x: (-x[0], x[1]))
 
-    # Pick with distance constraint
     target = max(1, math.ceil(len(all_words) * target_ratio))
     selected = set()
     for _prio, idx in candidates:
@@ -704,7 +698,6 @@ def detect_emphasis_free(blocks: List[Dict],
             continue
         selected.add(idx)
 
-    # Apply emphasis flags
     for idx in selected:
         all_words[idx]["is_emphasis"] = True
 
@@ -713,14 +706,10 @@ def detect_emphasis_free(blocks: List[Dict],
 
 def detect_emphasis_claude(blocks: List[Dict], api_key: str,
                            model: str = "claude-haiku-4-5") -> List[Dict]:
-    """Use Claude to identify the 3-5 most impactful words across the whole script.
-
-    Returns blocks with words[i].is_emphasis = True for chosen words.
-    """
+    """Use Claude to identify the most impactful words across the whole script."""
     import anthropic
     client = anthropic.Anthropic(api_key=api_key)
 
-    # Build a flat numbered list of all words: "[0] Hello [1] this [2] is..."
     numbered = []
     flat_words = []
     idx = 0
@@ -733,7 +722,7 @@ def detect_emphasis_claude(blocks: List[Dict], api_key: str,
     if not flat_words:
         return blocks
 
-    target_n = max(3, min(8, len(flat_words) // 8))  # ~12% of words emphasized
+    target_n = max(3, min(8, len(flat_words) // 8))
 
     prompt = (
         "You are a viral video editor. Below is a transcript of a short video, "
@@ -757,7 +746,6 @@ def detect_emphasis_claude(blocks: List[Dict], api_key: str,
     raw = msg.content[0].text.strip()
     m = re.search(r"\[[\s\S]*?\]", raw)
     if not m:
-        # Fallback to free detection
         return detect_emphasis_free(blocks)
     try:
         indices = set(int(x) for x in json.loads(m.group(0)))
@@ -777,16 +765,7 @@ def clear_emphasis(blocks: List[Dict]) -> List[Dict]:
 
 
 def split_emphasis_to_solo(blocks: List[Dict]) -> List[Dict]:
-    """For each emphasis word, make it a standalone block (more visual impact).
-
-    Splits blocks containing emphasis words into chunks:
-      • non-emphasis words → grouped together as before
-      • each emphasis word → its own standalone block
-
-    Example:
-      "I made a million dollars with this incredible secret"  (million, incredible emphasis)
-      → "I made a" | "million" | "dollars with this" | "incredible" | "secret"
-    """
+    """For each emphasis word, make it a standalone block."""
     def _make_block(words_chunk: List[Dict]) -> Dict:
         text = " ".join(w["word"] for w in words_chunk).strip()
         return {
@@ -828,9 +807,7 @@ def _alignment_code(align: str, position: str) -> int:
 
 def build_ass_file(blocks: List[Dict], style: Dict, video_w: int = 1080, video_h: int = 1920,
                    total_duration: float = 0.0, watermark: Dict = None) -> str:
-    """Generate ASS. If style['karaoke'] → use \\K tags + secondary color for unspoken words.
-    Optional watermark dict: {text, font, size, color, opacity (0-1), position}.
-    """
+    """Generate ASS subtitle file."""
     alignment = _alignment_code(style["align"], style["position"])
     primary = hex_to_ass_color(style["color"])
     secondary = hex_to_ass_color(style.get("karaoke_unspoken_color", "#9CA3AF"))
@@ -841,9 +818,9 @@ def build_ass_file(blocks: List[Dict], style: Dict, video_w: int = 1080, video_h
         back_color = "&H00000000"
         bg_outline_w = style["outline_w"]
     elif style["bg_mode"] == "Caja negra":
-        border_style = 4  # BorderStyle 4 = caja redondeada en libass/ffmpeg
+        border_style = 4
         back_color = hex_to_ass_color("#000000", alpha="60")
-        bg_outline_w = max(style["outline_w"], 12.0)  # outline alto = esquinas redondeadas
+        bg_outline_w = max(style["outline_w"], 12.0)
     else:
         border_style = 4
         back_color = hex_to_ass_color(style["bg_color"], alpha="CC")
@@ -867,13 +844,11 @@ YCbCr Matrix: TV.709
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Default,{style['font']},{style['size']},{primary},{secondary},{outline_c},{back_color},{bold},0,0,0,100,100,0,0,{border_style},{bg_outline_w},{style['shadow']},{alignment},40,40,{margin_v},1
 """
-    # Optional watermark style (alpha-blended via PrimaryAlpha)
     if watermark and watermark.get("text"):
         wm_align_map = {"Arriba izquierda": 7, "Arriba derecha": 9,
                         "Abajo izquierda": 1, "Abajo derecha": 3,
                         "Arriba centro": 8, "Abajo centro": 2}
         wm_alignment = wm_align_map.get(watermark.get("position", "Abajo derecha"), 3)
-        # Convert opacity 0-1 → ASS alpha hex (00 = opaque, FF = transparent)
         op = max(0.05, min(1.0, float(watermark.get("opacity", 0.7))))
         alpha = f"{int((1 - op) * 255):02X}"
         wm_color = hex_to_ass_color(watermark.get("color", "#FFFFFF"), alpha=alpha)
@@ -890,19 +865,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         if not blk["text"].strip():
             continue
         if style.get("karaoke") and blk.get("words"):
-            # Karaoke: each word advances primary color via \K (secondary = unspoken color).
-            # If a word has is_emphasis=True → also scale up + emphasis color.
             emphasis_color = hex_to_ass_color(style.get("karaoke_emphasis_color", "#FFD700"))
             emphasis_scale = int(style.get("karaoke_emphasis_scale", 130))
             uppercase = bool(style.get("uppercase"))
 
-            # ── Special case: SOLO emphasis word block → bouncy pop-in animation ──
             if len(blk["words"]) == 1 and blk["words"][0].get("is_emphasis"):
                 w = blk["words"][0]
                 token = w["word"].replace("{", "(").replace("}", ")")
                 if uppercase:
                     token = token.upper()
-                # Bouncy pop-in: 50% → 160% (overshoot) → 92% → 100% in 380ms
                 text = (
                     "{\\1c%s\\fscx50\\fscy50"
                     "\\t(0,140,\\fscx160\\fscy160)"
@@ -918,7 +889,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     if uppercase:
                         token = token.upper()
                     if w.get("is_emphasis"):
-                        # Bigger + emphasis color, then reset
                         parts.append("{\\k%d\\1c%s\\fscx%d\\fscy%d}%s {\\fscx100\\fscy100\\1c%s}"
                                      % (cs, emphasis_color, emphasis_scale, emphasis_scale,
                                         token, secondary))
@@ -926,7 +896,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                         parts.append("{\\k%d\\1c%s}%s {\\1c%s}" % (cs, primary, token, secondary))
                 text = "".join(parts).rstrip(" ").rstrip("{\\1c" + secondary + "}")
         elif blk.get("words") and any(w.get("is_emphasis") for w in blk["words"]):
-            # Non-karaoke mode with emphasis words: highlight them in color + bigger scale
             emphasis_color = hex_to_ass_color(style.get("karaoke_emphasis_color", "#FFD700"))
             emphasis_scale = int(style.get("karaoke_emphasis_scale", 130))
             uppercase = bool(style.get("uppercase"))
@@ -950,7 +919,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         line = f"Dialogue: 0,{seconds_to_ass_time(blk['start'])},{seconds_to_ass_time(blk['end'])},Default,,0,0,0,,{text}"
         events.append(line)
 
-    # Watermark dialogue line spanning the whole video
     if watermark and watermark.get("text"):
         wm_text = str(watermark["text"]).replace("\n", " ").replace("{", "(").replace("}", ")")
         end_t = total_duration if total_duration > 0 else (
@@ -1016,17 +984,15 @@ def render_video_with_subs(video_path: str, ass_path: str, output_path: str,
 
 def render_preview_frame(video_path: str, blocks: List[Dict], style: Dict,
                          out_image: str, watermark: Dict = None) -> Tuple[bool, str]:
-    """Extract a single frame from the middle of a meaningful subtitle block, with subs burned in."""
+    """Extract a single frame with subs burned in for preview."""
     if not blocks:
         return False, "No blocks"
-    # Pick a block roughly in the middle of the video
     blk = blocks[len(blocks) // 2]
     target_t = blk["start"] + max(0.05, (blk["end"] - blk["start"]) * 0.4)
     v_w, v_h = get_video_dimensions(video_path)
 
     work_dir = Path(out_image).parent
     ass_path = work_dir / f"_preview_{uuid.uuid4().hex[:6]}.ass"
-    # Generate ASS containing ONLY this block, but shifted to start at 0
     shifted = dict(blk)
     delta = blk["start"]
     shifted["start"] = 0.0
@@ -1042,9 +1008,6 @@ def render_preview_frame(video_path: str, blocks: List[Dict], style: Dict,
     filter_txt = work_dir / f"_preview_{uuid.uuid4().hex[:6]}.txt"
     filter_txt.write_text(f"ass=filename={ass_path.name}", encoding="utf-8")
 
-    # Seek to target_t in original video, take 1 frame, but apply subs (which are at t=0 in ass).
-    # Use a 2-step: extract frame at target_t to PNG, then re-apply subs starting at t=0 of a 0.1s loop.
-    # Simpler: extract frame, then overlay using ass on a single image converted to 0.1s video.
     raw_frame = work_dir / f"_raw_{uuid.uuid4().hex[:6]}.png"
     cmd1 = [FFMPEG, "-y", "-ss", f"{target_t:.2f}", "-i", str(Path(video_path).resolve()),
             "-vframes", "1", "-q:v", "3", str(raw_frame)]
@@ -1052,7 +1015,6 @@ def render_preview_frame(video_path: str, blocks: List[Dict], style: Dict,
     if r1.returncode != 0 or not raw_frame.exists():
         return False, r1.stderr[-500:]
 
-    # Apply subtitles from ASS at t=0.5s of a 1s loop, then output single frame
     cmd2 = [FFMPEG, "-y",
             "-loop", "1", "-t", "1", "-i", str(raw_frame),
             "-filter_script:v", filter_txt.name,
@@ -1169,7 +1131,7 @@ col_input, col_editor, col_style = st.columns([1.0, 1.55, 1.05], gap="large")
 
 # ─── COLUMN 1: INPUT & TRANSCRIPTION ──────────────────────────────────────────
 with col_input:
-    st.markdown('<div class="tt-card-title"><span class="tt-step">1</span>Vídeo &amp; Transcripción</div>', unsafe_allow_html=True)
+    st.markdown('<div class="tt-card-title"><span class="tt-step">1</span>Vídeo &amp; Transcripció</div>', unsafe_allow_html=True)
 
     st.markdown("""
     <style>
@@ -1190,9 +1152,9 @@ with col_input:
     """, unsafe_allow_html=True)
 
     uploaded = st.file_uploader(
-        "Sube tu vídeo vertical",
+        "Puja el teu vídeo vertical",
         type=["mp4", "mov", "mkv", "webm"],
-        help="Reels, TikToks, Shorts. Máx ≈ 150 MB recomendado.",
+        help="Reels, TikToks, Shorts. Màx ≈ 150 MB recomanat.",
         key="uploader",
     )
 
@@ -1226,111 +1188,110 @@ with col_input:
     st.markdown("&nbsp;", unsafe_allow_html=True)
 
     words_per_block = st.selectbox(
-        "Palabras por subtítulo",
+        "Paraules per subtítol",
         options=[2, 3, 4, 5, 6, 7, 8, 10, 12],
         index=1,
-        help="Bloques cortos = más retención. (Se usa como límite máximo; el split inteligente "
-             "corta antes en pausas y signos de puntuación.)",
+        help="Blocs curts = més retenció. (S'usa com a límit màxim; el split intel·ligent "
+             "talla abans en pauses i signes de puntuació.)",
     )
 
-    # Split inteligente siempre activo
     smart_split = True
 
-    LANG_OPTS = [("auto", "Detectar automáticamente"), ("es", "Español"), ("en", "English"),
-                 ("pt", "Português"), ("fr", "Français"), ("de", "Deutsch"),
+    # ── CHANGE 3: Added ("ca", "Català") to LANG_OPTS ────────────────────────
+    LANG_OPTS = [("auto", "Detectar automàticament"), ("ca", "Català"), ("es", "Español"),
+                 ("en", "English"), ("pt", "Português"), ("fr", "Français"), ("de", "Deutsch"),
                  ("it", "Italiano"), ("ja", "日本語"), ("zh", "中文")]
-    language = st.selectbox("Idioma del audio", options=LANG_OPTS,
+    language = st.selectbox("Idioma de l'àudio", options=LANG_OPTS,
                             format_func=lambda x: x[1], index=0)
 
-    # ─── Engine selector ───────────────────────────────────────────────────
     use_openai = bool(ss.get("user_openai_key"))
 
     if not use_openai:
         local_model = st.selectbox(
-            "🆓 Modelo local (gratis)",
+            "🆓 Model local (gratuït)",
             ["tiny", "base", "small"],
             index=1,
             help=(
-                "tiny → ultra rápido, calidad básica (~150 MB)\n"
-                "base → recomendado, buena calidad (~250 MB)\n"
-                "small → más lento, mejor calidad (~500 MB)\n\n"
-                "Primera vez descarga el modelo (puede tardar 30-60s)."
+                "tiny → ultra ràpid, qualitat bàsica (~150 MB)\n"
+                "base → recomanat, bona qualitat (~250 MB)\n"
+                "small → més lent, millor qualitat (~500 MB)\n\n"
+                "Primera vegada descarrega el model (pot trigar 30-60s)."
             ),
             key="local_model_size",
         )
     else:
         local_model = "base"
-        st.info("🚀 Usando OpenAI Whisper-1 API (con tu key personal)", icon="✓")
+        st.info("🚀 Usant OpenAI Whisper-1 API (amb la teva clau personal)", icon="✓")
 
-    with st.expander("🔑  OpenAI API Key (opcional, para más velocidad/calidad)"):
+    with st.expander("🔑  OpenAI API Key (opcional, per més velocitat/qualitat)"):
         st.caption(
-            "Si pegas tu propia key, la app usará Whisper-1 API (más rápido) y "
-            "GPT-4o-mini para traducir (mejor calidad). **Tu key nunca se guarda en disco**, "
-            "solo en la sesión del navegador."
+            "Si enganxes la teva clau, l'app usarà Whisper-1 API (més ràpid) i "
+            "GPT-4o-mini per traduir (millor qualitat). **La teva clau no es desa mai al disc**, "
+            "només a la sessió del navegador."
         )
         new_key = st.text_input(
-            "Tu OpenAI API Key (sk-...)",
+            "La teva OpenAI API Key (sk-...)",
             value=ss.get("user_openai_key", ""),
             type="password",
             placeholder="sk-...",
             key="openai_key_input",
-            help="Obtén una en platform.openai.com/api-keys",
+            help="Obtén-ne una a platform.openai.com/api-keys",
         )
         if new_key != ss.get("user_openai_key", ""):
             ss.user_openai_key = new_key.strip()
             st.rerun()
         if ss.get("user_openai_key"):
-            if st.button("Quitar OpenAI key", type="secondary",
+            if st.button("Treure OpenAI key", type="secondary",
                          use_container_width=True, key="btn-clear-key"):
                 ss.user_openai_key = ""
                 st.rerun()
 
-    with st.expander("🤖  Claude API Key (opcional, para detección PRO)"):
+    with st.expander("🤖  Claude API Key (opcional, per detecció PRO)"):
         st.caption(
-            "Pegando tu Claude key, la app usa **Claude Haiku 4.5** para "
-            "auto-detectar palabras impactantes (Hormozi PRO), traducciones "
-            "más naturales y futuras features. Coste por vídeo: ~$0.0002. "
-            "**Tu key nunca se guarda en disco**."
+            "Enganxant la teva clau de Claude, l'app usa **Claude Haiku 4.5** per "
+            "auto-detectar paraules impactants (Hormozi PRO), traduccions "
+            "més naturals i funcions futures. Cost per vídeo: ~$0.0002. "
+            "**La teva clau no es desa mai al disc**."
         )
         new_anthro = st.text_input(
-            "Tu Anthropic API Key (sk-ant-...)",
+            "La teva Anthropic API Key (sk-ant-...)",
             value=ss.get("user_anthropic_key", ""),
             type="password",
             placeholder="sk-ant-...",
             key="anthropic_key_input",
-            help="Obtén una en console.anthropic.com/settings/keys",
+            help="Obtén-ne una a console.anthropic.com/settings/keys",
         )
         if new_anthro != ss.get("user_anthropic_key", ""):
             ss.user_anthropic_key = new_anthro.strip()
             st.rerun()
         if ss.get("user_anthropic_key"):
-            if st.button("Quitar Claude key", type="secondary",
+            if st.button("Treure Claude key", type="secondary",
                          use_container_width=True, key="btn-clear-anthro"):
                 ss.user_anthropic_key = ""
                 st.rerun()
 
     transcribe_disabled = ss.video_path is None
-    if st.button("🎙️  Transcribir", disabled=transcribe_disabled, type="primary",
+    if st.button("🎙️  Transcriure", disabled=transcribe_disabled, type="primary",
                  use_container_width=True, key="btn-transcribe"):
         wd = get_workdir()
         audio_path = os.path.join(wd, "audio.mp3")
-        with st.spinner("Extrayendo audio..."):
+        with st.spinner("Extraient àudio..."):
             ok = extract_audio(ss.video_path, audio_path)
         if not ok:
-            st.error("Error al extraer audio con FFmpeg.")
+            st.error("Error en extreure l'àudio amb FFmpeg.")
         else:
             try:
                 if use_openai:
-                    with st.spinner("Transcribiendo con OpenAI Whisper-1..."):
+                    with st.spinner("Transcrivint amb OpenAI Whisper-1..."):
                         words = transcribe_openai(audio_path, language[0],
                                                   api_key=ss.user_openai_key)
                 else:
-                    with st.spinner(f"Cargando modelo `{local_model}` (primera vez tarda)..."):
+                    with st.spinner(f"Carregant model `{local_model}` (primera vegada triga)..."):
                         _load_whisper_local(local_model)
-                    with st.spinner(f"Transcribiendo con faster-whisper `{local_model}`..."):
+                    with st.spinner(f"Transcrivint amb faster-whisper `{local_model}`..."):
                         words = transcribe_local(audio_path, language[0], model_size=local_model)
                 if not words:
-                    st.error("No se detectó audio inteligible en el vídeo.")
+                    st.error("No s'ha detectat àudio intel·ligible al vídeo.")
                 else:
                     if smart_split:
                         ss.blocks = group_words_smart(words, max_per_block=words_per_block)
@@ -1339,13 +1300,13 @@ with col_input:
                     ss.transcribed = True
                     ss.output_path = None
                     ss.preview_path = None
-                    st.success(f"✅  {len(ss.blocks)} bloques generados.")
+                    st.success(f"✅  {len(ss.blocks)} blocs generats.")
                     st.rerun()
             except Exception as e:
-                st.error(f"Error al transcribir: {e}")
+                st.error(f"Error en transcriure: {e}")
 
     if ss.transcribed and ss.blocks:
-        if st.button("🔁  Reagrupar bloques", type="secondary",
+        if st.button("🔁  Reagrupar blocs", type="secondary",
                      use_container_width=True, key="btn-regroup"):
             flat = []
             for b in ss.blocks:
@@ -1363,35 +1324,33 @@ with col_input:
                 else group_words_into_blocks(flat, words_per_block)
             st.rerun()
 
-        # ─── PRO: Auto-detectar palabras clave (emphasis) ──────────────────
         st.markdown("---")
-        st.markdown('<div class="tt-card-title" style="margin-bottom:8px;">✨ Palabras clave PRO</div>',
+        st.markdown('<div class="tt-card-title" style="margin-bottom:8px;">✨ Paraules clau PRO</div>',
                     unsafe_allow_html=True)
-        emp_engine = ("Claude Haiku 4.5 (tu key)"
-                      if ss.get("user_anthropic_key") else "Keywords libres (gratis)")
-        st.caption(f"Motor: **{emp_engine}** · Resalta palabras impactantes en estilo Hormozi.")
+        emp_engine = ("Claude Haiku 4.5 (la teva clau)"
+                      if ss.get("user_anthropic_key") else "Keywords lliures (gratuït)")
+        st.caption(f"Motor: **{emp_engine}** · Ressalta paraules impactants en estil Hormozi.")
         empc1, empc2 = st.columns(2)
         with empc1:
             if st.button("✨  Detectar", type="secondary",
                          use_container_width=True, key="btn-emphasis"):
                 try:
-                    with st.spinner("Detectando palabras clave..."):
+                    with st.spinner("Detectant paraules clau..."):
                         if ss.get("user_anthropic_key"):
                             ss.blocks = detect_emphasis_claude(
                                 ss.blocks, ss.user_anthropic_key)
                         else:
                             ss.blocks = detect_emphasis_free(ss.blocks)
-                        # Split: each emphasis word becomes its own block
                         ss.blocks = split_emphasis_to_solo(ss.blocks)
                     ss.emphasis_detected = True
                     ss.preview_path = None
                     n_emp = sum(1 for b in ss.blocks for w in b.get("words", []) if w.get("is_emphasis"))
-                    st.success(f"✅  {n_emp} palabras destacadas en su propio bloque.")
+                    st.success(f"✅  {n_emp} paraules destacades en el seu propi bloc.")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error: {e}")
         with empc2:
-            if st.button("🗑  Limpiar", type="secondary",
+            if st.button("🗑  Netejar", type="secondary",
                          use_container_width=True, key="btn-clear-emphasis",
                          disabled=not ss.emphasis_detected):
                 ss.blocks = clear_emphasis(ss.blocks)
@@ -1399,187 +1358,181 @@ with col_input:
                 ss.preview_path = None
                 st.rerun()
 
-        # ─── Translation ────────────────────────────────────────────────
+        # ── CHANGE 4: Added ("Catalan", "Català 🏴") to TRANSLATE_OPTS ──────
         st.markdown("---")
-        st.markdown('<div class="tt-card-title" style="margin-bottom:8px;">🌐 Traducir subtítulos</div>',
+        st.markdown('<div class="tt-card-title" style="margin-bottom:8px;">🌐 Traduir subtítols</div>',
                     unsafe_allow_html=True)
         TRANSLATE_OPTS = [
-            ("English", "Inglés 🇬🇧"), ("Spanish", "Español 🇪🇸"),
-            ("Portuguese (Brazilian)", "Portugués 🇧🇷"), ("French", "Francés 🇫🇷"),
-            ("German", "Alemán 🇩🇪"), ("Italian", "Italiano 🇮🇹"),
-            ("Japanese", "Japonés 🇯🇵"), ("Chinese (Simplified)", "Chino 🇨🇳"),
-            ("Korean", "Coreano 🇰🇷"), ("Hindi", "Hindi 🇮🇳"),
-            ("Arabic", "Árabe 🇸🇦"),
+            ("Catalan", "Català 🏴"), ("English", "Anglès 🇬🇧"), ("Spanish", "Castellà 🇪🇸"),
+            ("Portuguese (Brazilian)", "Portuguès 🇧🇷"), ("French", "Francès 🇫🇷"),
+            ("German", "Alemany 🇩🇪"), ("Italian", "Italià 🇮🇹"),
+            ("Japanese", "Japonès 🇯🇵"), ("Chinese (Simplified)", "Xinès 🇨🇳"),
+            ("Korean", "Coreà 🇰🇷"), ("Hindi", "Hindi 🇮🇳"),
+            ("Arabic", "Àrab 🇸🇦"),
         ]
-        tlang = st.selectbox("Idioma destino", options=TRANSLATE_OPTS,
+        tlang = st.selectbox("Idioma destí", options=TRANSLATE_OPTS,
                              format_func=lambda x: x[1], key="translate_lang", index=0)
-        engine_label = ("GPT-4o-mini (tu OpenAI key)"
-                        if ss.get("user_openai_key") else "Google Translate (gratis)")
+        engine_label = ("GPT-4o-mini (la teva OpenAI key)"
+                        if ss.get("user_openai_key") else "Google Translate (gratuït)")
         st.caption(f"Motor: **{engine_label}**")
-        if st.button("✨  Traducir", type="secondary", use_container_width=True,
+        if st.button("✨  Traduir", type="secondary", use_container_width=True,
                      key="btn-translate"):
             try:
-                with st.spinner(f"Traduciendo {len(ss.blocks)} bloques..."):
+                with st.spinner(f"Traduint {len(ss.blocks)} blocs..."):
                     ss.blocks = translate_blocks_dispatch(
                         ss.blocks, tlang[0], api_key=ss.get("user_openai_key") or None
                     )
                 ss.preview_path = None
                 ss.output_path = None
-                st.success("✅  Subtítulos traducidos.")
+                st.success("✅  Subtítols traduïts.")
                 st.rerun()
             except Exception as e:
-                st.error(f"Error al traducir: {e}")
+                st.error(f"Error en traduir: {e}")
 
 
-# ─── COLUMN 3: STYLE & RENDER (renders BEFORE col_editor so style is computed) ─
+# ─── COLUMN 3: STYLE & RENDER ─────────────────────────────────────────────────
 with col_style:
-    st.markdown('<div class="tt-card-title"><span class="tt-step">3</span>Estilo &amp; Render</div>', unsafe_allow_html=True)
+    st.markdown('<div class="tt-card-title"><span class="tt-step">3</span>Estil &amp; Render</div>', unsafe_allow_html=True)
 
-    # Preset selector
     preset_name = st.selectbox(
         "🎨 Preset viral",
         options=list(PRESETS.keys()),
         index=list(PRESETS.keys()).index(ss.preset_applied) if ss.preset_applied in PRESETS else 0,
-        help="Aplica un look listo para usar. Cambia a 'Personalizado' para ajustar manualmente.",
+        help="Aplica un look llest per usar. Canvia a 'Personalizado' per ajustar manualment.",
         key="preset_select",
     )
 
-    # Apply preset → seed defaults (only when changed)
     if preset_name != ss.preset_applied:
         ss.preset_applied = preset_name
         if PRESETS[preset_name]:
             for k, v in PRESETS[preset_name].items():
                 ss[f"_pre_{k}"] = v
         ss.preview_path = None
-        # If switching to/from Hormozi PRO, hint about emphasis detection
         if preset_name == "Hormozi PRO 🎤✨" and not ss.get("emphasis_detected"):
-            st.toast("💡 Pulsa 'Detectar palabras clave PRO' en la columna 1 para el efecto Hormozi completo")
+            st.toast("💡 Prem 'Detectar paraules clau PRO' a la columna esquerra per l'efecte Hormozi complet")
 
     def get_default(k, fallback):
         return ss.get(f"_pre_{k}", fallback)
 
     FONTS = ["Inter", "Montserrat", "Arial", "Impact", "Bebas Neue", "Poppins",
              "Roboto", "Helvetica", "Verdana", "Tahoma"]
-    with st.expander("🔤  Tipografía & tamaño", expanded=False):
+    with st.expander("🔤  Tipografia & mida", expanded=False):
         font = st.selectbox(
-            "Tipografía", FONTS,
+            "Tipografia", FONTS,
             index=FONTS.index(get_default("font", "Impact"))
             if get_default("font", "Impact") in FONTS else 3,
         )
-        size = st.slider("Tamaño de fuente", 24, 120, get_default("size", 72), step=2)
-        bold = st.checkbox("Negrita", value=get_default("bold", True))
+        size = st.slider("Mida de la font", 24, 120, get_default("size", 72), step=2)
+        bold = st.checkbox("Negreta", value=get_default("bold", True))
         uppercase = st.checkbox(
-            "TODO MAYÚSCULAS", value=get_default("uppercase", False),
-            help="Convierte todo el texto a mayúsculas (efecto MrBeast/Hormozi).",
+            "TOT MAJÚSCULES", value=get_default("uppercase", False),
+            help="Converteix tot el text a majúscules (efecte MrBeast/Hormozi).",
         )
 
     cc1, cc2 = st.columns(2)
     with cc1:
-        color = st.color_picker("Color de texto", get_default("color", "#FFFFFF"))
+        color = st.color_picker("Color del text", get_default("color", "#FFFFFF"))
         st.markdown(f'<div style="height:8px;border-radius:4px;background:{color};box-shadow:0 0 8px {color}88;"></div>', unsafe_allow_html=True)
     with cc2:
-        outline_color = st.color_picker("Color contorno", get_default("outline_color", "#000000"))
+        outline_color = st.color_picker("Color contorn", get_default("outline_color", "#000000"))
         st.markdown(f'<div style="height:8px;border-radius:4px;background:{outline_color};box-shadow:0 0 8px {outline_color}88;"></div>', unsafe_allow_html=True)
 
     BG_OPTS = ["Transparente", "Caja negra", "Color personalizado"]
     bg_default = get_default("bg_mode", "Transparente")
     bg_mode = st.selectbox(
-        "Fondo del texto", BG_OPTS,
+        "Fons del text", BG_OPTS,
         index=BG_OPTS.index(bg_default) if bg_default in BG_OPTS else 0,
     )
     bg_color = "#000000"
     if bg_mode == "Color personalizado":
-        bg_color = st.color_picker("Color de fondo",
+        bg_color = st.color_picker("Color de fons",
                                    get_default("bg_color", "#8A2BE2"))
 
     POS_OPTS = ["Arriba", "Centro", "Abajo", "Personalizada"]
     pos_default = get_default("position", "Abajo")
     position = st.selectbox(
-        "Posición vertical", POS_OPTS,
+        "Posició vertical", POS_OPTS,
         index=POS_OPTS.index(pos_default) if pos_default in POS_OPTS else 2,
     )
     custom_margin_v = int(get_default("custom_margin_v", 350))
     if position == "Personalizada":
         custom_margin_v = st.slider(
-            "Margen vertical (px)", 0, 900, custom_margin_v, step=10,
-            help="0 = pegado al borde inferior · 350 = posición estándar · 900 = muy arriba.",
+            "Marge vertical (px)", 0, 900, custom_margin_v, step=10,
+            help="0 = enganxat al vora inferior · 350 = posició estàndard · 900 = molt amunt.",
         )
         ss["_pre_custom_margin_v"] = custom_margin_v
 
     AL_OPTS = ["Izquierda", "Centro", "Derecha"]
     al_default = get_default("align", "Centro")
     align = st.selectbox(
-        "Alineación", AL_OPTS,
+        "Alineació", AL_OPTS,
         index=AL_OPTS.index(al_default) if al_default in AL_OPTS else 1,
     )
 
-    # Karaoke
-    karaoke = st.checkbox("🎤  Animación karaoke (palabra-por-palabra)",
+    karaoke = st.checkbox("🎤  Animació karaoke (paraula per paraula)",
                           value=get_default("karaoke", False),
-                          help="Resalta cada palabra a medida que se pronuncia. Estilo Hormozi.")
+                          help="Ressalta cada paraula a mesura que es pronuncia. Estil Hormozi.")
     karaoke_unspoken_color = "#9CA3AF"
     karaoke_emphasis_color = get_default("karaoke_emphasis_color", "#FFD700")
     karaoke_emphasis_scale = int(get_default("karaoke_emphasis_scale", 130))
 
-    # Show emphasis controls whenever karaoke is on OR emphasis has been detected
     show_emphasis_controls = karaoke or ss.get("emphasis_detected", False)
     if show_emphasis_controls:
         if karaoke:
             kc1, kc2 = st.columns(2)
             with kc1:
                 karaoke_unspoken_color = st.color_picker(
-                    "Color sin hablar",
+                    "Color sense parlar",
                     get_default("karaoke_unspoken_color", "#FFFFFF"),
-                    help="Color de palabras que aún no se han pronunciado.",
+                    help="Color de les paraules que encara no s'han pronunciat.",
                 )
             with kc2:
                 karaoke_emphasis_color = st.color_picker(
-                    "Color énfasis ✨",
+                    "Color èmfasi ✨",
                     karaoke_emphasis_color,
-                    help="Color de palabras destacadas con 'Detectar palabras clave PRO'.",
+                    help="Color de les paraules destacades amb 'Detectar paraules clau PRO'.",
                 )
         else:
-            st.caption("✨ **Palabras clave detectadas** — ajusta cómo se resaltan:")
+            st.caption("✨ **Paraules clau detectades** — ajusta com es ressalten:")
             ec1, ec2 = st.columns(2)
             with ec1:
                 karaoke_emphasis_color = st.color_picker(
-                    "Color énfasis ✨",
+                    "Color èmfasi ✨",
                     karaoke_emphasis_color,
-                    help="Color de las palabras clave resaltadas.",
+                    help="Color de les paraules clau ressaltades.",
                 )
             with ec2:
                 karaoke_emphasis_scale = st.slider(
-                    "Tamaño énfasis %", 100, 200, karaoke_emphasis_scale, step=5,
-                    help="Escala de las palabras clave (100 = igual que el resto).",
+                    "Mida èmfasi %", 100, 200, karaoke_emphasis_scale, step=5,
+                    help="Escala de les paraules clau (100 = igual que la resta).",
                 )
 
-    with st.expander("⚙️  Efectos avanzados"):
-        outline_w = st.slider("Grosor del contorno", 0.0, 6.0,
+    with st.expander("⚙️  Efectes avançats"):
+        outline_w = st.slider("Gruix del contorn", 0.0, 6.0,
                               float(get_default("outline_w", 2.5)), step=0.5)
-        shadow = st.slider("Sombra paralela", 0.0, 6.0,
+        shadow = st.slider("Ombra paral·lela", 0.0, 6.0,
                            float(get_default("shadow", 1.0)), step=0.5)
 
-    # ─── Watermark ─────────────────────────────────────────────────────────
-    with st.expander("💧  Marca de agua (watermark)"):
-        wm_enabled = st.checkbox("Añadir marca de agua", value=False, key="wm_enabled")
-        wm_text = st.text_input("Texto", value="@tu_usuario",
+    with st.expander("💧  Marca d'aigua (watermark)"):
+        wm_enabled = st.checkbox("Afegir marca d'aigua", value=False, key="wm_enabled")
+        wm_text = st.text_input("Text", value="@el_teu_usuari",
                                 disabled=not wm_enabled, key="wm_text")
         wm_pos = st.selectbox(
-            "Posición",
+            "Posició",
             ["Arriba derecha", "Arriba izquierda", "Arriba centro",
              "Abajo derecha", "Abajo izquierda", "Abajo centro"],
             index=3, disabled=not wm_enabled, key="wm_pos",
         )
         wcol1, wcol2 = st.columns(2)
         with wcol1:
-            wm_size = st.slider("Tamaño", 18, 80, 36, step=2,
+            wm_size = st.slider("Mida", 18, 80, 36, step=2,
                                 disabled=not wm_enabled, key="wm_size")
         with wcol2:
             wm_color = st.color_picker("Color", "#FFFFFF",
                                        disabled=not wm_enabled, key="wm_color")
-        wm_opacity = st.slider("Opacidad", 0.1, 1.0, 0.7, step=0.05,
+        wm_opacity = st.slider("Opacitat", 0.1, 1.0, 0.7, step=0.05,
                                disabled=not wm_enabled, key="wm_opacity")
-        wm_font = st.selectbox("Fuente", FONTS,
+        wm_font = st.selectbox("Font", FONTS,
                                index=FONTS.index("Inter"),
                                disabled=not wm_enabled, key="wm_font")
 
@@ -1602,9 +1555,8 @@ with col_style:
 
     st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
 
-    # ─── Render ────────────────────────────────────────────────────────────
     render_disabled = not (ss.video_path and ss.blocks)
-    if st.button("🎬  Renderizar vídeo final", disabled=render_disabled,
+    if st.button("🎬  Renderitzar vídeo final", disabled=render_disabled,
                  type="primary", use_container_width=True, key="btn-render"):
         wd = get_workdir()
         v_w, v_h = get_video_dimensions(ss.video_path)
@@ -1615,26 +1567,26 @@ with col_style:
         Path(ass_path).write_text(ass_content, encoding="utf-8")
 
         out_path = os.path.join(wd, f"output_{uuid.uuid4().hex[:6]}.mp4")
-        progress = st.progress(0.0, text="Renderizando con FFmpeg...")
+        progress = st.progress(0.0, text="Renderitzant amb FFmpeg...")
         ok, log_tail = render_video_with_subs(
             ss.video_path, ass_path, out_path,
-            progress_cb=lambda p: progress.progress(p, text=f"Renderizando... {int(p * 100)}%"),
+            progress_cb=lambda p: progress.progress(p, text=f"Renderitzant... {int(p * 100)}%"),
         )
         progress.empty()
         if ok and os.path.exists(out_path):
             ss.output_path = out_path
-            st.success("✅  Vídeo renderizado.")
+            st.success("✅  Vídeo renderitzat.")
         else:
-            st.error("Error en FFmpeg al renderizar.")
-            with st.expander("Ver log de FFmpeg"):
-                st.code(log_tail or "(sin log)")
+            st.error("Error en FFmpeg en renderitzar.")
+            with st.expander("Veure log de FFmpeg"):
+                st.code(log_tail or "(sense log)")
 
     if ss.output_path and os.path.exists(ss.output_path):
         st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
         st.video(ss.output_path)
         with open(ss.output_path, "rb") as f:
             st.download_button(
-                "⬇️  Descargar MP4",
+                "⬇️  Descarregar MP4",
                 f.read(),
                 file_name=f"transcribethat_{Path(ss.video_name or 'video').stem}.mp4",
                 mime="video/mp4",
@@ -1643,37 +1595,35 @@ with col_style:
             )
 
 
-# ─── COLUMN 2 (renders LAST so we can use computed style/watermark) ──────────
+# ─── COLUMN 2: PREVIEW & EDITOR ──────────────────────────────────────────────
 with col_editor:
     st.markdown('<div class="tt-card-title"><span class="tt-step">2</span>Preview &amp; Editor</div>',
                 unsafe_allow_html=True)
 
-    # ─── Live Preview (centered, always visible) ────────────────────────────
     st.markdown('<div class="tt-preview-wrap">', unsafe_allow_html=True)
 
     if not ss.video_path:
         st.markdown("""
         <div class="tt-preview-empty">
             <div class="tt-preview-empty-icon">🎬</div>
-            <div class="tt-preview-empty-title">Sube un vídeo para empezar</div>
-            <div style="font-size:13px;">Aquí verás el preview con tu estilo aplicado</div>
+            <div class="tt-preview-empty-title">Puja un vídeo per començar</div>
+            <div style="font-size:13px;">Aquí veuràs el preview amb el teu estil aplicat</div>
         </div>
         """, unsafe_allow_html=True)
     elif not ss.blocks:
         st.markdown("""
         <div class="tt-preview-empty">
             <div class="tt-preview-empty-icon">⏳</div>
-            <div class="tt-preview-empty-title">Vídeo cargado</div>
-            <div style="font-size:13px;">Pulsa <b>Transcribir</b> en la columna izquierda para generar los subtítulos.</div>
+            <div class="tt-preview-empty-title">Vídeo carregat</div>
+            <div style="font-size:13px;">Prem <b>Transcriure</b> a la columna esquerra per generar els subtítols.</div>
         </div>
         """, unsafe_allow_html=True)
     else:
-        # Auto-generate preview if not yet generated
         if not ss.preview_path or not os.path.exists(ss.preview_path):
             try:
                 wd = get_workdir()
                 out_img = os.path.join(wd, f"preview_{uuid.uuid4().hex[:6]}.jpg")
-                with st.spinner("Generando preview..."):
+                with st.spinner("Generant preview..."):
                     ok, _err = render_preview_frame(ss.video_path, ss.blocks, style,
                                                     out_img, watermark=watermark)
                 if ok:
@@ -1685,11 +1635,11 @@ with col_editor:
             pcol_l, pcol_c, pcol_r = st.columns([1, 2.2, 1])
             with pcol_c:
                 st.image(ss.preview_path, use_container_width=True)
-            if st.button("🔄  Actualizar preview con el estilo actual",
+            if st.button("🔄  Actualitzar preview amb l'estil actual",
                          type="secondary", use_container_width=True, key="btn-refresh-preview"):
                 wd = get_workdir()
                 out_img = os.path.join(wd, f"preview_{uuid.uuid4().hex[:6]}.jpg")
-                with st.spinner("Regenerando preview..."):
+                with st.spinner("Regenerant preview..."):
                     ok, err = render_preview_frame(ss.video_path, ss.blocks, style,
                                                    out_img, watermark=watermark)
                 if ok:
@@ -1701,23 +1651,22 @@ with col_editor:
             st.markdown("""
             <div class="tt-preview-empty">
                 <div class="tt-preview-empty-icon">⚠️</div>
-                <div class="tt-preview-empty-title">No se pudo generar el preview</div>
+                <div class="tt-preview-empty-title">No s'ha pogut generar el preview</div>
             </div>
             """, unsafe_allow_html=True)
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # ─── Editor de subtítulos ─────────────────────────────────────────────
-    st.markdown('<div class="tt-card-title" style="margin-top:18px;">✏️ Editor de subtítulos</div>',
+    st.markdown('<div class="tt-card-title" style="margin-top:18px;">✏️ Editor de subtítols</div>',
                 unsafe_allow_html=True)
     if not ss.blocks:
         st.markdown("""
         <div class="tt-card" style="text-align:center;padding:30px 20px;">
-            <div style="color:var(--text-dim);font-size:13px;">Aún no hay subtítulos. Transcribe primero.</div>
+            <div style="color:var(--text-dim);font-size:13px;">Encara no hi ha subtítols. Transcriu primer.</div>
         </div>
         """, unsafe_allow_html=True)
     else:
-        st.caption(f"📝 {len(ss.blocks)} bloques · edita el texto si hay errores")
+        st.caption(f"📝 {len(ss.blocks)} blocs · edita el text si hi ha errors")
         st.markdown('<div style="max-height:380px; overflow-y:auto; padding-right:6px;">',
                     unsafe_allow_html=True)
         for idx, blk in enumerate(ss.blocks):
@@ -1742,12 +1691,11 @@ with col_editor:
                 ss.blocks[idx]["words"] = [{"word": t, "start": blk["start"] + i * per,
                                             "end": blk["start"] + (i + 1) * per}
                                            for i, t in enumerate(toks)]
-                ss.preview_path = None  # invalidate so next refresh regenerates
+                ss.preview_path = None
         st.markdown("</div>", unsafe_allow_html=True)
 
-        # ─── Export SRT/VTT ─────────────────────────────────────────────────
         st.markdown("---")
-        st.markdown('<div class="tt-card-title" style="margin-bottom:8px;">📤 Exportar subtítulos</div>',
+        st.markdown('<div class="tt-card-title" style="margin-bottom:8px;">📤 Exportar subtítols</div>',
                     unsafe_allow_html=True)
         ec1, ec2 = st.columns(2)
         with ec1:
