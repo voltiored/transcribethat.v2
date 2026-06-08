@@ -529,7 +529,7 @@ async def translate_blocks(blocks: List[Dict], target_lang_name: str,
 # Map verbose language → Google Translate code (deep-translator uses ISO codes)
 GTRANS_LANG_MAP = {
     "English": "en", "Spanish": "es", "Portuguese (Brazilian)": "pt",
-    "French": "fr", "German": "de", "Italian": "it",
+    "French": "fr", "Catalan": "ca", "German": "de", "Italian": "it",
     "Japanese": "ja", "Chinese (Simplified)": "zh-CN",
     "Korean": "ko", "Hindi": "hi", "Arabic": "ar",
 }
@@ -1237,7 +1237,7 @@ with col_input:
     smart_split = True
 
     LANG_OPTS = [("auto", "Detectar automáticamente"), ("es", "Español"), ("en", "English"),
-                 ("pt", "Português"), ("fr", "Français"), ("de", "Deutsch"),
+                 ("pt", "Português"), ("fr", "Français"), ("ca", "Català"), ("de", "Deutsch"),
                  ("it", "Italiano"), ("ja", "日本語"), ("zh", "中文")]
     language = st.selectbox("Idioma del audio", options=LANG_OPTS,
                             format_func=lambda x: x[1], index=0)
@@ -1406,7 +1406,7 @@ with col_input:
         TRANSLATE_OPTS = [
             ("English", "Inglés 🇬🇧"), ("Spanish", "Español 🇪🇸"),
             ("Portuguese (Brazilian)", "Portugués 🇧🇷"), ("French", "Francés 🇫🇷"),
-            ("German", "Alemán 🇩🇪"), ("Italian", "Italiano 🇮🇹"),
+            ("Catalan", "Català 🇪🇸"), ("German", "Alemán 🇩🇪"), ("Italian", "Italiano 🇮🇹"),
             ("Japanese", "Japonés 🇯🇵"), ("Chinese (Simplified)", "Chino 🇨🇳"),
             ("Korean", "Coreano 🇰🇷"), ("Hindi", "Hindi 🇮🇳"),
             ("Arabic", "Árabe 🇸🇦"),
