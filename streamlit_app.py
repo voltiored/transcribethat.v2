@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import tempfile
 import uuid
+import hashlib
 from pathlib import Path
 from typing import List, Dict, Tuple
 
@@ -813,6 +814,11 @@ def build_ass_file(blocks: List[Dict], style: Dict, video_w: int = 1080, video_h
     secondary = hex_to_ass_color(style.get("karaoke_unspoken_color", "#9CA3AF"))
     outline_c = hex_to_ass_color(style["outline_color"])
 
+    safe_font = FONT_SAFE_MAP.get(
+        style["font"],
+        style["font"]
+    )
+
     if style["bg_mode"] == "Transparente":
         border_style = 1
         back_color = "&H00000000"
@@ -842,9 +848,14 @@ YCbCr Matrix: TV.709
 
 [V4+ Styles]
 Format: Name, Fuentename, Fuentesize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{style['font']},{style['size']},{primary},{secondary},{outline_c},{back_color},{bold},0,0,0,100,100,0,0,{border_style},{bg_outline_w},{style['shadow']},{alignment},40,40,{margin_v},1
+Style: Default,{safe_font},{style['size']},{primary},{secondary},{outline_c},{back_color},{bold},0,0,0,100,100,0,0,{border_style},{bg_outline_w},{style['shadow']},{alignment},40,40,{margin_v},1
 """
     if watermark and watermark.get("text"):
+        wm_font_safe = FONT_SAFE_MAP.get(
+            watermark.get("font", "Inter"),
+            watermark.get("font", "Inter")
+        )
+      
         wm_align_map = {"Arriba izquierda": 7, "Arriba derecha": 9,
                         "Abajo izquierda": 1, "Abajo derecha": 3,
                         "Arriba centro": 8, "Abajo centro": 2}
@@ -1098,6 +1109,20 @@ PRESETS = {
         "position": "Centro", "align": "Centro",
         "outline_w": 4.0, "shadow": 2.0, "bold": True, "karaoke": True,
     },
+}
+
+FONT_SAFE_MAP = {
+    "Inter": "DejaVu Sans",
+    "Montserrat": "Liberation Sans",
+    "Poppins": "Nimbus Sans",
+    "Roboto": "DejaVu Sans",
+    "Helvetica": "Liberation Sans",
+    "Verdana": "DejaVu Sans",
+    "Tahoma": "DejaVu Sans",
+
+    "Arial": "Liberation Sans",
+    "Impact": "Impact",
+    "Bebas Neue": "Impact",
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1619,17 +1644,16 @@ with col_editor:
         </div>
         """, unsafe_allow_html=True)
     else:
-        if not ss.preview_path or not os.path.exists(ss.preview_path):
-            try:
-                wd = get_workdir()
-                out_img = os.path.join(wd, f"preview_{uuid.uuid4().hex[:6]}.jpg")
-                with st.spinner("Generando preview..."):
-                    ok, _err = render_preview_frame(ss.video_path, ss.blocks, style,
-                                                    out_img, watermark=watermark)
-                if ok:
-                    ss.preview_path = out_img
-            except Exception:
-                pass
+        style_hash = hashlib.md5(
+          str(sorted(style.items())).encode()
+        ).hexdigest()[:8]
+
+        if (
+            not ss.preview_path
+            or not os.path.exists(ss.preview_path)
+            or ss.get("_style_hash") != style_hash
+        ):
+            ss["_style_hash"] = style_hash
 
         if ss.preview_path and os.path.exists(ss.preview_path):
             pcol_l, pcol_c, pcol_r = st.columns([1, 2.2, 1])
