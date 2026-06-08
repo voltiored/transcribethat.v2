@@ -1423,6 +1423,9 @@ with col_input:
                     ss.blocks = translate_blocks_dispatch(
                         ss.blocks, tlang[0], api_key=ss.get("user_openai_key") or None
                     )
+                # Clear text input widget states so editor shows translated text
+                for blk in ss.blocks:
+                    st.session_state.pop(f"txt_{blk['id']}", None)
                 ss.preview_path = None
                 ss.output_path = None
                 st.success("✅  Subtítulos traducidos.")
