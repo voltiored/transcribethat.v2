@@ -814,10 +814,7 @@ def build_ass_file(blocks: List[Dict], style: Dict, video_w: int = 1080, video_h
     secondary = hex_to_ass_color(style.get("karaoke_unspoken_color", "#9CA3AF"))
     outline_c = hex_to_ass_color(style["outline_color"])
 
-    safe_font = FONT_SAFE_MAP.get(
-        style["font"],
-        style["font"]
-    )
+    safe_font = FONT_SAFE_MAP.get(style["font"], style["font"])
 
     if style["bg_mode"] == "Transparente":
         border_style = 1
