@@ -8,6 +8,7 @@ Optional: user pastes their OpenAI key → uses Whisper-1 API + GPT-4o-mini for 
 import os
 import re
 import json
+import copy
 import shutil
 import subprocess
 import tempfile
@@ -518,6 +519,35 @@ def group_words_smart(words: List[Dict], max_per_block: int = 4,
                 })
             current = []
     return blocks
+
+
+def strip_punctuation_blocks(blocks: List[Dict]) -> List[Dict]:
+    """Return a copy of blocks with leading/trailing punctuation removed from every word.
+
+    Only strips punctuation at the edges of each word (so internal characters like
+    apostrophes in contractions are preserved). Words that are pure punctuation
+    (e.g. a lone "...") are dropped; blocks that end up empty are dropped too.
+    Original timings are kept untouched so re-toggling restores exact sync.
+    """
+    import string
+    punct = string.punctuation + "¿¡«»…—–“”‘’"
+    new_blocks = []
+    for b in blocks:
+        new_words = []
+        for w in b.get("words", []):
+            token = w["word"].strip(punct)
+            if not token:
+                continue
+            nw = dict(w)
+            nw["word"] = token
+            new_words.append(nw)
+        if not new_words:
+            continue
+        nb = dict(b)
+        nb["words"] = new_words
+        nb["text"] = " ".join(w["word"] for w in new_words)
+        new_blocks.append(nb)
+    return new_blocks
 
 
 async def translate_blocks(blocks: List[Dict], target_lang_name: str,
@@ -1154,6 +1184,8 @@ ss.setdefault("preset_applied", "Personalizado")
 ss.setdefault("user_openai_key", "")
 ss.setdefault("user_anthropic_key", "")
 ss.setdefault("emphasis_detected", False)
+ss.setdefault("punct_stripped", False)
+ss.setdefault("blocks_before_punct_strip", None)
 
 
 def get_workdir() -> str:
@@ -1343,6 +1375,31 @@ with col_input:
                     st.rerun()
             except Exception as e:
                 st.error(f"Error al transcribir: {e}")
+
+    st.markdown("&nbsp;", unsafe_allow_html=True)
+    punct_toggle = st.toggle(
+        "🔇  Quitar signos de puntuación",
+        value=ss.punct_stripped,
+        disabled=not ss.blocks,
+        key="toggle_punct",
+        help="Elimina comas, puntos, etc. de los subtítulos. Vuelve a desactivarlo para restaurarlos.",
+    )
+    if punct_toggle != ss.punct_stripped:
+        if punct_toggle:
+            # Turning ON: back up the current blocks (with punctuation) before stripping
+            ss.blocks_before_punct_strip = copy.deepcopy(ss.blocks)
+            ss.blocks = strip_punctuation_blocks(ss.blocks)
+        elif ss.blocks_before_punct_strip is not None:
+            # Turning OFF: restore the exact pre-strip blocks
+            ss.blocks = ss.blocks_before_punct_strip
+            ss.blocks_before_punct_strip = None
+        ss.punct_stripped = punct_toggle
+        # Clear editor text-input widget states so they refresh with the new text
+        for blk in ss.blocks:
+            st.session_state.pop(f"txt_{blk['id']}", None)
+        ss.preview_path = None
+        ss.output_path = None
+        st.rerun()
 
     if ss.transcribed and ss.blocks:
         if st.button("🔁  Reagrupar bloques", type="secondary",
