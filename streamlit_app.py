@@ -1708,6 +1708,12 @@ with col_editor:
     st.markdown('<div class="tt-card-title"><span class="tt-step">2</span>Preview &amp; Editor</div>',
                 unsafe_allow_html=True)
 
+    # NUEVO: Detectar cambios de estilo para forzar un nuevo preview
+    current_style_str = str(style) + str(watermark)
+    if ss.get("last_style") != current_style_str:
+        ss.preview_path = None
+        ss.last_style = current_style_str
+
     # ─── Live Preview (centered, always visible) ────────────────────────────
     st.markdown('<div class="tt-preview-wrap">', unsafe_allow_html=True)
 
@@ -1793,7 +1799,7 @@ with col_editor:
                     unsafe_allow_html=True,
                 )
             new_text = st.text_input(f"block_{blk['id']}", value=blk["text"],
-                                     label_visibility="collapsed", key=f"txt_{blk['id']}")
+                         label_visibility="collapsed", key=f"txt_{blk['id']}_p{ss.punct_stripped}")
             if new_text != blk["text"]:
                 ss.blocks[idx]["text"] = new_text
                 toks = new_text.split() or [new_text]
