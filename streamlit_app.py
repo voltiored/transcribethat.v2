@@ -1494,129 +1494,96 @@ with col_input:
 with col_style:
     st.markdown('<div class="tt-card-title"><span class="tt-step">3</span>Estilo &amp; Render</div>', unsafe_allow_html=True)
 
-    # Preset selector
+    # Iniciar valores base en memoria si no existen
+    if "font" not in ss:
+        for k, v in PRESETS["MrBeast 🟡"].items():
+            ss[k] = v
+        ss["custom_margin_v"] = 350
+        ss["outline_w"] = 2.5
+        ss["shadow"] = 1.0
+
     preset_name = st.selectbox(
         "🎨 Preset viral",
         options=list(PRESETS.keys()),
         index=list(PRESETS.keys()).index(ss.preset_applied) if ss.preset_applied in PRESETS else 0,
-        help="Aplica un look listo para usar. Cambia a 'Personalizado' para ajustar manualmente.",
-        key="preset_select",
+        help="Selecciona un look base y luego ajústalo libremente.",
     )
 
-    # Apply preset → seed defaults (only when changed)
+    # Si cambiamos el preset, inyectamos los valores en la memoria
     if preset_name != ss.preset_applied:
         ss.preset_applied = preset_name
-        if PRESETS[preset_name]:
+        if PRESETS.get(preset_name):
             for k, v in PRESETS[preset_name].items():
-                ss[f"_pre_{k}"] = v
-        ss.preview_path = None
-        # If switching to/from Hormozi PRO, hint about emphasis detection
-        if preset_name == "Hormozi PRO 🎤✨" and not ss.get("emphasis_detected"):
-            st.toast("💡 Pulsa 'Detectar palabras clave PRO' en la columna 1 para el efecto Hormozi completo")
+                ss[k] = v
+        st.rerun()
 
-    def get_default(k, fallback):
-        return ss.get(f"_pre_{k}", fallback)
-
-    FONTS = ["Inter", "Montserrat", "Arial", "Impact", "Bebas Neue", "Poppins",
-             "Roboto", "Helvetica", "Verdana", "Tahoma"]
+    FONTS = ["Inter", "Montserrat", "Arial", "Impact", "Bebas Neue", "Poppins", "Roboto", "Helvetica", "Verdana", "Tahoma"]
+    
     with st.expander("🔤  Tipografía & tamaño", expanded=False):
-        font = st.selectbox(
-            "Tipografía", FONTS,
-            index=FONTS.index(get_default("font", "Impact"))
-            if get_default("font", "Impact") in FONTS else 3,
-        )
-        size = st.slider("Tamaño de fuente", 24, 120, get_default("size", 72), step=2)
-        bold = st.checkbox("Negrita", value=get_default("bold", True))
-        uppercase = st.checkbox(
-            "TODO MAYÚSCULAS", value=get_default("uppercase", False),
-            help="Convierte todo el texto a mayúsculas (efecto MrBeast/Hormozi).",
-        )
+        font = st.selectbox("Tipografía", FONTS, key="font")
+        size = st.slider("Tamaño de fuente", 24, 120, step=2, key="size")
+        bold = st.checkbox("Negrita", key="bold")
+        uppercase = st.checkbox("TODO MAYÚSCULAS", help="Convierte todo a mayúsculas.", key="uppercase")
 
     cc1, cc2 = st.columns(2)
     with cc1:
-        color = st.color_picker("Color de texto", get_default("color", "#FFFFFF"))
-        st.markdown(f'<div style="height:8px;border-radius:4px;background:{color};box-shadow:0 0 8px {color}88;"></div>', unsafe_allow_html=True)
+        color = st.color_picker("Color de texto", key="color")
     with cc2:
-        outline_color = st.color_picker("Color contorno", get_default("outline_color", "#000000"))
-        st.markdown(f'<div style="height:8px;border-radius:4px;background:{outline_color};box-shadow:0 0 8px {outline_color}88;"></div>', unsafe_allow_html=True)
+        outline_color = st.color_picker("Color contorno", key="outline_color")
 
     BG_OPTS = ["Transparente", "Caja negra", "Color personalizado"]
-    bg_default = get_default("bg_mode", "Transparente")
-    bg_mode = st.selectbox(
-        "Fondo del texto", BG_OPTS,
-        index=BG_OPTS.index(bg_default) if bg_default in BG_OPTS else 0,
-    )
+    bg_mode = st.selectbox("Fondo del texto", BG_OPTS, key="bg_mode")
+    
     bg_color = "#000000"
     if bg_mode == "Color personalizado":
-        bg_color = st.color_picker("Color de fondo",
-                                   get_default("bg_color", "#8A2BE2"))
+        bg_color = st.color_picker("Color de fondo", key="bg_color")
 
     POS_OPTS = ["Arriba", "Centro", "Abajo", "Personalizada"]
-    pos_default = get_default("position", "Abajo")
-    position = st.selectbox(
-        "Posición vertical", POS_OPTS,
-        index=POS_OPTS.index(pos_default) if pos_default in POS_OPTS else 2,
-    )
-    custom_margin_v = int(get_default("custom_margin_v", 350))
+    position = st.selectbox("Posición vertical", POS_OPTS, key="position")
+    
     if position == "Personalizada":
-        custom_margin_v = st.slider(
-            "Margen vertical (px)", 0, 900, custom_margin_v, step=10,
-            help="0 = pegado al borde inferior · 350 = posición estándar · 900 = muy arriba.",
-        )
-        ss["_pre_custom_margin_v"] = custom_margin_v
+        custom_margin_v = st.slider("Margen vertical (px)", 0, 900, step=10, key="custom_margin_v")
+    else:
+        custom_margin_v = ss.get("custom_margin_v", 350)
 
     AL_OPTS = ["Izquierda", "Centro", "Derecha"]
-    al_default = get_default("align", "Centro")
-    align = st.selectbox(
-        "Alineación", AL_OPTS,
-        index=AL_OPTS.index(al_default) if al_default in AL_OPTS else 1,
-    )
+    align = st.selectbox("Alineación", AL_OPTS, key="align")
 
-    # Karaoke
-    karaoke = st.checkbox("🎤  Animación karaoke (palabra-por-palabra)",
-                          value=get_default("karaoke", False),
-                          help="Resalta cada palabra a medida que se pronuncia. Estilo Hormozi.")
+    karaoke = st.checkbox("🎤  Animación karaoke", help="Resalta cada palabra a medida que se pronuncia.", key="karaoke")
+    
     karaoke_unspoken_color = "#9CA3AF"
-    karaoke_emphasis_color = get_default("karaoke_emphasis_color", "#FFD700")
-    karaoke_emphasis_scale = int(get_default("karaoke_emphasis_scale", 130))
+    karaoke_emphasis_color = ss.get("karaoke_emphasis_color", "#FFD700")
+    karaoke_emphasis_scale = ss.get("karaoke_emphasis_scale", 130)
 
-    # Show emphasis controls whenever karaoke is on OR emphasis has been detected
     show_emphasis_controls = karaoke or ss.get("emphasis_detected", False)
     if show_emphasis_controls:
         if karaoke:
             kc1, kc2 = st.columns(2)
             with kc1:
-                karaoke_unspoken_color = st.color_picker(
-                    "Color sin hablar",
-                    get_default("karaoke_unspoken_color", "#FFFFFF"),
-                    help="Color de palabras que aún no se han pronunciado.",
-                )
+                karaoke_unspoken_color = st.color_picker("Color sin hablar", key="karaoke_unspoken_color")
             with kc2:
-                karaoke_emphasis_color = st.color_picker(
-                    "Color énfasis ✨",
-                    karaoke_emphasis_color,
-                    help="Color de palabras destacadas con 'Detectar palabras clave PRO'.",
-                )
+                karaoke_emphasis_color = st.color_picker("Color énfasis ✨", key="karaoke_emphasis_color")
         else:
-            st.caption("✨ **Palabras clave detectadas** — ajusta cómo se resaltan:")
             ec1, ec2 = st.columns(2)
             with ec1:
-                karaoke_emphasis_color = st.color_picker(
-                    "Color énfasis ✨",
-                    karaoke_emphasis_color,
-                    help="Color de las palabras clave resaltadas.",
-                )
+                karaoke_emphasis_color = st.color_picker("Color énfasis ✨", key="karaoke_emphasis_color")
             with ec2:
-                karaoke_emphasis_scale = st.slider(
-                    "Tamaño énfasis %", 100, 200, karaoke_emphasis_scale, step=5,
-                    help="Escala de las palabras clave (100 = igual que el resto).",
-                )
+                karaoke_emphasis_scale = st.slider("Tamaño énfasis %", 100, 200, step=5, key="karaoke_emphasis_scale")
 
     with st.expander("⚙️  Efectos avanzados"):
-        outline_w = st.slider("Grosor del contorno", 0.0, 6.0,
-                              float(get_default("outline_w", 2.5)), step=0.5)
-        shadow = st.slider("Sombra paralela", 0.0, 6.0,
-                           float(get_default("shadow", 1.0)), step=0.5)
+        outline_w = st.slider("Grosor del contorno", 0.0, 6.0, step=0.5, key="outline_w")
+        shadow = st.slider("Sombra paralela", 0.0, 6.0, step=0.5, key="shadow")
+
+    # Mantenemos esto listo para enviarlo a generar:
+    style = {
+        "font": font, "size": size, "color": color, "outline_color": outline_color,
+        "bg_mode": bg_mode, "bg_color": bg_color, "position": position, "align": align,
+        "outline_w": outline_w, "shadow": shadow, "bold": bold, "uppercase": uppercase,
+        "karaoke": karaoke, "karaoke_unspoken_color": karaoke_unspoken_color,
+        "karaoke_emphasis_color": karaoke_emphasis_color,
+        "karaoke_emphasis_scale": karaoke_emphasis_scale,
+        "custom_margin_v": custom_margin_v,
+    }
 
     # ─── Watermark ─────────────────────────────────────────────────────────
     with st.expander("💧  Marca de agua (watermark)"):
