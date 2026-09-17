@@ -1291,7 +1291,7 @@ with col_input:
         )
     else:
         local_model = "base"
-        st.info("🚀 Usando OpenAI Whisper-1 API (con tu key personal)", icon="✅")
+        st.info("Usando OpenAI Whisper-1 API (con tu key personal)", icon="✅")
 
     with st.expander("🔑  OpenAI API Key (opcional, para más velocidad/calidad)"):
         st.caption(
@@ -1341,7 +1341,7 @@ with col_input:
                 st.rerun()
 
     transcribe_disabled = ss.video_path is None
-    if st.button("🎙️  Transcribir", disabled=transcribe_disabled, type="primary",
+    if st.button("Transcribir", disabled=transcribe_disabled, type="primary",
                  use_container_width=True, key="btn-transcribe"):
         wd = get_workdir()
         audio_path = os.path.join(wd, "audio.mp3")
