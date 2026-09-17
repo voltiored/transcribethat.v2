@@ -1674,16 +1674,11 @@ with col_editor:
     st.markdown('<div class="tt-card-title"><span class="tt-step">2</span>Preview &amp; Editor</div>',
                 unsafe_allow_html=True)
 
-    # 1. Blindaje: Evitar errores si 'style' o 'watermark' no existen por algún motivo
     safe_style = style if 'style' in locals() else {}
     safe_watermark = watermark if 'watermark' in locals() else None
     
-    # 2. Comprobar cambios sin interrumpir
     current_style_str = str(safe_style) + str(safe_watermark)
     style_changed = ss.get("last_style") != current_style_str
-
-    # ─── Live Preview ────────────────────────────────────────────
-    st.markdown('<div class="tt-preview-wrap">', unsafe_allow_html=True)
 
     if not ss.video_path:
         st.markdown("""
@@ -1702,11 +1697,33 @@ with col_editor:
         </div>
         """, unsafe_allow_html=True)
     else:
-        # Botón siempre disponible
+        # 1. Generar automáticamente la primera vez en segundo plano
+        if not ss.get("first_preview_done"):
+            wd = get_workdir()
+            out_img = os.path.join(wd, f"preview_{uuid.uuid4().hex[:6]}.jpg")
+            ok, _ = render_preview_frame(ss.video_path, ss.blocks, safe_style, out_img, watermark=safe_watermark)
+            if ok:
+                ss.preview_path = out_img
+                ss.last_style = current_style_str
+            ss.first_preview_done = True
+
+        # 2. PRIMERO mostramos la imagen (arriba)
+        if ss.preview_path and os.path.exists(ss.preview_path):
+            st.image(ss.preview_path)
+        else:
+            st.markdown("""
+            <div class="tt-preview-empty" style="min-height: 180px;">
+                <div class="tt-preview-empty-icon">🖼️</div>
+                <div class="tt-preview-empty-title">Sin vista previa</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
+        
+        # 3. LUEGO mostramos el botón de actualizar (abajo)
         btn_text = "⚠️ Actualizar preview (cambios pendientes)" if style_changed else "🔄 Actualizar preview"
         btn_type = "primary" if style_changed else "secondary"
         
-        # Botón para forzar actualización manual
         if st.button(btn_text, type=btn_type, use_container_width=True, key="btn-refresh-preview"):
             wd = get_workdir()
             out_img = os.path.join(wd, f"preview_{uuid.uuid4().hex[:6]}.jpg")
@@ -1719,34 +1736,6 @@ with col_editor:
                 st.rerun()
             else:
                 st.error("Error al generar preview.")
-
-        # Generar automáticamente SOLO la primera vez (SIN reiniciar la app para evitar bucles)
-        if not ss.get("first_preview_done"):
-            wd = get_workdir()
-            out_img = os.path.join(wd, f"preview_{uuid.uuid4().hex[:6]}.jpg")
-            ok, _ = render_preview_frame(ss.video_path, ss.blocks, safe_style, out_img, watermark=safe_watermark)
-            if ok:
-                ss.preview_path = out_img
-                ss.last_style = current_style_str
-            # Guardamos que ya se hizo la primera vez
-            ss.first_preview_done = True
-
-        # Mostrar la imagen
-        if ss.preview_path and os.path.exists(ss.preview_path):
-            st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
-            pcol_l, pcol_c, pcol_r = st.columns([1, 2.2, 1])
-            with pcol_c:
-                st.image(ss.preview_path, use_container_width=True)
-        else:
-            st.markdown("""
-            <div class="tt-preview-empty" style="min-height: 180px; margin-top: 12px;">
-                <div class="tt-preview-empty-icon">🖼️</div>
-                <div class="tt-preview-empty-title">Sin vista previa</div>
-                <div style="font-size:13px;">Haz clic en actualizar para generarla.</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-    st.markdown("</div>", unsafe_allow_html=True)
 
     # ─── Editor de subtítulos ─────────────────────────────────────────────
     st.markdown('<div class="tt-card-title" style="margin-top:18px;">✏️ Editor de subtítulos</div>',
