@@ -1291,7 +1291,7 @@ with col_input:
         )
     else:
         local_model = "base"
-        st.info("🚀 Usando OpenAI Whisper-1 API (con tu key personal)", icon="✓")
+        st.info("🚀 Usando OpenAI Whisper-1 API (con tu key personal)", icon="✅")
 
     with st.expander("🔑  OpenAI API Key (opcional, para más velocidad/calidad)"):
         st.caption(
