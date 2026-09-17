@@ -116,8 +116,7 @@ label, .stSelectbox label, .stTextInput label, .stTextArea label, .stNumberInput
     color: var(--text) !important; font-weight: 600 !important; font-size: 13px !important;
 }
 
-.stSlider [role="slider"] { background: var(--accent) !important; border-color: var(--accent) !important; }
-.stSlider > div > div > div > div { background: var(--accent) !important; }
+.stSlider [data-baseweb="slider"] [role="slider"] { background-color: var(--accent) !important; border-color: var(--accent) !important; }
 
 .stRadio > div { gap: 6px !important; }
 .stRadio label { padding: 8px 14px !important; border-radius: 10px !important;
@@ -1377,28 +1376,28 @@ with col_input:
                 st.error(f"Error al transcribir: {e}")
 
     st.markdown("&nbsp;", unsafe_allow_html=True)
-    punct_toggle = st.toggle(
-        "🔇  Quitar signos de puntuación",
-        value=ss.punct_stripped,
-        disabled=not ss.blocks,
-        key="toggle_punct",
-        help="Elimina comas, puntos, etc. de los subtítulos. Vuelve a desactivarlo para restaurarlos.",
-    )
-    if punct_toggle != ss.punct_stripped:
-        if punct_toggle:
-            # Turning ON: back up the current blocks (with punctuation) before stripping
+    
+    # Botón con la misma estética de la app
+    btn_label = "🔇 Restaurar signos de puntuación" if ss.punct_stripped else "🔇 Quitar signos de puntuación"
+    if st.button(btn_label, disabled=not ss.blocks, type="secondary", use_container_width=True, key="btn-punct"):
+        if ss.punct_stripped:
+            # Restaurar
+            if ss.blocks_before_punct_strip is not None:
+                ss.blocks = ss.blocks_before_punct_strip
+                ss.blocks_before_punct_strip = None
+            ss.punct_stripped = False
+        else:
+            # Quitar
             ss.blocks_before_punct_strip = copy.deepcopy(ss.blocks)
             ss.blocks = strip_punctuation_blocks(ss.blocks)
-        elif ss.blocks_before_punct_strip is not None:
-            # Turning OFF: restore the exact pre-strip blocks
-            ss.blocks = ss.blocks_before_punct_strip
-            ss.blocks_before_punct_strip = None
-        ss.punct_stripped = punct_toggle
-        # Clear editor text-input widget states so they refresh with the new text
+            ss.punct_stripped = True
+
+        # Limpiamos las cajas de texto para que refresquen
         for blk in ss.blocks:
             st.session_state.pop(f"txt_{blk['id']}", None)
-        ss.preview_path = None
-        ss.output_path = None
+            st.session_state.pop(f"txt_{blk['id']}_pTrue", None)
+            st.session_state.pop(f"txt_{blk['id']}_pFalse", None)
+        
         st.rerun()
 
     if ss.transcribed and ss.blocks:
@@ -1735,17 +1734,20 @@ with col_editor:
         """, unsafe_allow_html=True)
     else:
         # Auto-generate preview if not yet generated
+        # Solo auto-generar el preview la primera vez para no congelar la app
         if not ss.preview_path or not os.path.exists(ss.preview_path):
-            try:
-                wd = get_workdir()
-                out_img = os.path.join(wd, f"preview_{uuid.uuid4().hex[:6]}.jpg")
-                with st.spinner("Generando preview..."):
-                    ok, _err = render_preview_frame(ss.video_path, ss.blocks, style,
-                                                    out_img, watermark=watermark)
-                if ok:
-                    ss.preview_path = out_img
-            except Exception:
-                pass
+            if not ss.get("first_preview_done"):
+                try:
+                    wd = get_workdir()
+                    out_img = os.path.join(wd, f"preview_{uuid.uuid4().hex[:6]}.jpg")
+                    with st.spinner("Generando preview inicial..."):
+                        ok, _err = render_preview_frame(ss.video_path, ss.blocks, style,
+                                                        out_img, watermark=watermark)
+                    if ok:
+                        ss.preview_path = out_img
+                        ss.first_preview_done = True
+                except Exception:
+                    pass
 
         if ss.preview_path and os.path.exists(ss.preview_path):
             pcol_l, pcol_c, pcol_r = st.columns([1, 2.2, 1])
