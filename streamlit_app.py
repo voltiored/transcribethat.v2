@@ -1674,13 +1674,11 @@ with col_editor:
     st.markdown('<div class="tt-card-title"><span class="tt-step">2</span>Preview &amp; Editor</div>',
                 unsafe_allow_html=True)
 
-    # NUEVO: Detectar cambios de estilo para forzar un nuevo preview
+    # Detectamos si hay cambios en el estilo sin actualizar
     current_style_str = str(style) + str(watermark)
-    if ss.get("last_style") != current_style_str:
-        ss.preview_path = None
-        ss.last_style = current_style_str
+    style_changed = ss.get("last_style") != current_style_str
 
-    # ─── Live Preview (centered, always visible) ────────────────────────────
+    # ─── Live Preview ────────────────────────────────────────────
     st.markdown('<div class="tt-preview-wrap">', unsafe_allow_html=True)
 
     if not ss.video_path:
@@ -1700,43 +1698,47 @@ with col_editor:
         </div>
         """, unsafe_allow_html=True)
     else:
-        # Auto-generate preview if not yet generated
-        # Solo auto-generar el preview la primera vez para no congelar la app
-        if not ss.preview_path or not os.path.exists(ss.preview_path):
-            if not ss.get("first_preview_done"):
-                try:
-                    wd = get_workdir()
-                    out_img = os.path.join(wd, f"preview_{uuid.uuid4().hex[:6]}.jpg")
-                    with st.spinner("Generando preview inicial..."):
-                        ok, _err = render_preview_frame(ss.video_path, ss.blocks, style,
-                                                        out_img, watermark=watermark)
-                    if ok:
-                        ss.preview_path = out_img
-                        ss.first_preview_done = True
-                except Exception:
-                    pass
+        # Botón SIEMPRE visible para actualizar (no desaparece)
+        btn_text = "⚠️ Actualizar preview (cambios pendientes)" if style_changed else "🔄 Actualizar preview"
+        btn_type = "primary" if style_changed else "secondary"
+        
+        if st.button(btn_text, type=btn_type, use_container_width=True, key="btn-refresh-preview"):
+            wd = get_workdir()
+            out_img = os.path.join(wd, f"preview_{uuid.uuid4().hex[:6]}.jpg")
+            with st.spinner("Generando preview..."):
+                ok, err = render_preview_frame(ss.video_path, ss.blocks, style, out_img, watermark=watermark)
+            if ok:
+                ss.preview_path = out_img
+                ss.last_style = current_style_str
+                ss.first_preview_done = True
+                st.rerun()
+            else:
+                st.error(f"Error al generar preview: {err[:200]}")
 
+        # Auto-generar SOLO la primera vez de forma silenciosa
+        if not ss.get("first_preview_done"):
+            wd = get_workdir()
+            out_img = os.path.join(wd, f"preview_{uuid.uuid4().hex[:6]}.jpg")
+            ok, _ = render_preview_frame(ss.video_path, ss.blocks, style, out_img, watermark=watermark)
+            if ok:
+                ss.preview_path = out_img
+                ss.last_style = current_style_str
+            ss.first_preview_done = True
+            st.rerun()
+
+        # Mostrar la imagen si ya se generó
         if ss.preview_path and os.path.exists(ss.preview_path):
+            st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
             pcol_l, pcol_c, pcol_r = st.columns([1, 2.2, 1])
             with pcol_c:
                 st.image(ss.preview_path, use_container_width=True)
-            if st.button("🔄  Actualizar preview con el estilo actual",
-                         type="secondary", use_container_width=True, key="btn-refresh-preview"):
-                wd = get_workdir()
-                out_img = os.path.join(wd, f"preview_{uuid.uuid4().hex[:6]}.jpg")
-                with st.spinner("Regenerando preview..."):
-                    ok, err = render_preview_frame(ss.video_path, ss.blocks, style,
-                                                   out_img, watermark=watermark)
-                if ok:
-                    ss.preview_path = out_img
-                    st.rerun()
-                else:
-                    st.error(f"Error: {err[:200]}")
         else:
+            # Fallback en caso de error
             st.markdown("""
-            <div class="tt-preview-empty">
-                <div class="tt-preview-empty-icon">⚠️</div>
-                <div class="tt-preview-empty-title">No se pudo generar el preview</div>
+            <div class="tt-preview-empty" style="min-height: 180px; margin-top: 12px;">
+                <div class="tt-preview-empty-icon">🖼️</div>
+                <div class="tt-preview-empty-title">Sin vista previa</div>
+                <div style="font-size:13px;">Haz clic en el botón de arriba para generarla.</div>
             </div>
             """, unsafe_allow_html=True)
 
